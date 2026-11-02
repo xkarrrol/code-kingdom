@@ -1,0 +1,123 @@
+:root {
+  font-family: system-ui, sans-serif;
+  color: #242424;
+  background-color: #f5f5f5;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem;
+}
+
+.map-scroll {
+  overflow-x: auto;
+}
+
+.kingdom-game {
+  width: 512px;
+  height: 512px;
+}
+
+.kingdom-game canvas {
+  display: block;
+}
+
+.game-layout {
+  display: grid;
+  grid-template-columns: 512px minmax(0, 1fr);
+  align-items: start;
+  gap: 2rem;
+}
+
+.game-panel {
+  min-width: 0;
+}
+
+.code-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  border: 1px solid #39465b;
+  border-radius: 0.75rem;
+  color: #e6edf3;
+  background-color: #182131;
+}
+
+.code-editor h2,
+.code-editor p {
+  margin: 0;
+}
+
+.code-editor h2 {
+  font-size: 1.25rem;
+}
+
+.code-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 360px;
+  padding: 1rem;
+  border: 1px solid #53637b;
+  border-radius: 0.375rem;
+  color: #e6edf3;
+  background-color: #0d1420;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 1rem;
+  line-height: 1.7;
+  tab-size: 4;
+  resize: vertical;
+}
+
+.code-editor textarea:focus-visible {
+  outline: 2px solid #91c9ff;
+  outline-offset: 2px;
+}
+
+.code-editor button {
+  align-self: start;
+  padding: 0.65rem 1.25rem;
+  border: 1px solid #53637b;
+  border-radius: 0.375rem;
+  color: #b6c1d0;
+  background-color: #303d50;
+  font: inherit;
+}
+
+.code-editor button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.code-editor button:enabled {
+  cursor: pointer;
+  color: #ffffff;
+  background-color: #245b94;
+}
+
+.code-editor button:focus-visible {
+  outline: 2px solid #91c9ff;
+  outline-offset: 2px;
+}
+
+.code-editor p {
+  color: #b6c1d0;
+  font-size: 0.875rem;
+}
+
+.code-editor .code-error {
+  color: #ffb4ab;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 960px) {
+  .game-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
