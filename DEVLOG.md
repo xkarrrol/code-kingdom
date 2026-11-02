@@ -117,70 +117,7 @@ Najważniejsze pliki:
 
 ---
 
-## 5. Czego się nauczyłem?
-
-### Git i GitHub
-
-Poznałem podstawowe polecenia:
-
-```bash
-git add .
-git commit -m "Opis zmian"
-git push origin main
-```
-
-- `add` — przygotowuje zmiany.
-- `commit` — zapisuje wersję projektu.
-- `push` — wysyła zmiany do GitHuba.
-
-### React
-
-Poznałem:
-- Komponenty, np. `App.tsx`.
-- `useState` do przechowywania stanu.
-- `onChange` do obsługi zmian tekstu.
-- Podstawową strukturę aplikacji React.
-
-### TypeScript i Phaser
-
-Nauczyłem się:
-- Reprezentować obiekty współrzędnymi.
-- Korzystać z siatki wierszy i kolumn.
-- Zmieniać parametry animacji.
-- Rozdzielać zasady ruchu od grafiki.
-
-### Python
-
-Przećwiczyłem:
-- Pętle `for`.
-- Funkcje definiowane za pomocą `def`.
-- Wcięcia i bloki kodu.
-- Wielokrotne wykonywanie instrukcji.
-
-Przykładowy działający program:
-
-```python
-def collect_wood():
-    for i in range(3):
-        chop_wood()
-
-collect_wood()
-```
-
-### Asynchroniczność
-
-Poznałem podstawowe pojęcia:
-
-- `Promise` — reprezentuje wynik operacji, która zakończy się w przyszłości.
-- `await` — pozwala poczekać na zakończenie operacji.
-- `Web Worker` — wykonuje kod poza głównym wątkiem strony.
-- `postMessage` — umożliwia wymianę wiadomości z Workerem.
-
-Dzięki temu robotnik wykonuje kolejne ruchy dopiero po zakończeniu poprzednich animacji.
-
----
-
-## 6. Ograniczenia i bezpieczeństwo
+## 5. Ograniczenia i bezpieczeństwo
 
 Aktualna wersja to lokalny prototyp.
 
@@ -195,7 +132,7 @@ Zastosowane ograniczenia wykonywania kodu:
 
 ---
 
-## 7. Przydatne polecenia
+## 6. Przydatne polecenia
 
 Uruchomienie projektu:
 
@@ -227,7 +164,7 @@ Katalog projektu na komputerze:
 
 ---
 
-## 8. Następny etap — Milestone 02
+## 7. Następny etap — Milestone 02
 
 **Cel: pierwsza misja edukacyjna.**
 
@@ -240,19 +177,3 @@ Planujemy:
 - Prosty system postępów.
 
 Gra powinna zacząć uczyć programowania poprzez konkretne wyzwania.
-
----
-
-## 9. Najważniejszy wniosek
-
-W pierwszym etapie przeszliśmy od pustego repozytorium do działającej gry przeglądarkowej, w której Python steruje robotnikiem i pozwala pozyskiwać zasoby.
-
-Najważniejszym osiągnięciem nie jest sama mapa, lecz połączenie trzech elementów:
-
-**Kod Pythona → logika gry → widoczny efekt na mapie.**
-
-To fundament, na którym będziemy rozwijać całe Code Kingdom.
-
----
-
-*Milestone 01 — zakończony. Następny: Milestone 02 — First Mission.*
