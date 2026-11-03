@@ -42,6 +42,18 @@ main {
   font-size: 0.875rem;
 }
 
+.object-info {
+  padding: 0.75rem 1rem;
+  border: 1px solid #a38b44;
+  border-radius: 0.375rem;
+  background-color: #fff8dc;
+}
+
+.object-info h3,
+.object-info p {
+  margin: 0 0 0.3rem;
+}
+
 .editor-column {
   display: flex;
   flex-direction: column;

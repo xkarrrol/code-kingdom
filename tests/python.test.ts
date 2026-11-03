@@ -1,17 +1,19 @@
-import assert from 'node:assert/strict'
+﻿import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Worker } from 'node:worker_threads'
 import { PythonRunner } from '../src/python/PythonRunner.ts'
-import type { PythonWorker } from '../src/python/PythonRunner.ts'
+import type { PythonWorker, GameBridge } from '../src/python/PythonRunner.ts'
 import type { PythonRequest } from '../src/python/messages.ts'
 import { WorkerCommands } from '../src/game/commands.ts'
-import { chopWood, createResources } from '../src/game/resources.ts'
+import type { WorkerCommand } from '../src/game/commands.ts'
+import { chopWood, createResources, getTreeAhead } from '../src/game/resources.ts'
 import { kingdomMap } from '../src/game/map.ts'
 import { getWorkerDestination } from '../src/game/movement.ts'
+import { getSurroundings } from '../src/game/surroundings.ts'
 import { completeWorkerMove, createWorkerState, turnWorker } from '../src/game/workerState.ts'
 
-function createRealWorker(): PythonWorker {
-  const worker = new Worker(new URL('./helpers/python-worker.mjs', import.meta.url))
+function createRealWorker(jspi?: boolean): PythonWorker {
+  const worker = new Worker(new URL('./helpers/python-worker.mjs', import.meta.url), { workerData: { jspi } })
   const adapter: PythonWorker = {
     onmessage: null,
     onerror: null,
@@ -23,65 +25,13 @@ function createRealWorker(): PythonWorker {
   return adapter
 }
 
-test('Python zapisuje ruch i ścinanie; gra zbiera drewno i pozwala wejść na wycięte pole', async () => {
-  const runner = new PythonRunner(createRealWorker)
-  let state = createResources(kingdomMap.trees)
-  let position = createWorkerState(kingdomMap.worker)
-  const commands = await runner.run(`
-move_right()
-move_up()
-for i in range(3):
-    chop_wood()
-move_up()
-`)
-  assert.deepEqual(commands, ['move_right', 'move_up', 'chop_wood', 'chop_wood', 'chop_wood', 'move_up'])
-  assert.equal(state.collectedWood, 0)
-  const game = new WorkerCommands(async direction => {
-    const next = getWorkerDestination({ ...kingdomMap, trees: state.trees }, position, direction)
-    if (!next) return false
-    position = completeWorkerMove(position, next, direction)
-    return true
-  }, async () => {
-    const next = chopWood(state, position)
-    const changed = next !== state
-    state = next
-    return changed
-  })
-  await game.runCommands(commands)
-  assert.equal(state.collectedWood, 3)
-  assert.deepEqual(position, { column: 6, row: 2, facing: 'up' })
-  assert.equal(state.trees.length, kingdomMap.trees.length - 1)
-
-  await assert.rejects(async () => {
-    const invalid = await runner.run('chop_wood()\nraise ValueError("test")')
-    await game.runCommands(invalid)
-  }, /ValueError/)
-  assert.equal(state.collectedWood, 3)
-  await assert.rejects(runner.run('for i in range(101):\n    chop_wood()'), /limit 100/)
-  assert.equal(state.collectedWood, 3)
-})
-
-test('Python obsługuje wszystkie obroty oraz ścinanie po obrocie bez przemieszczania', async () => {
-  const runner = new PythonRunner(createRealWorker)
-  const commands = await runner.run(`
-move_up()
-move_up()
-turn_right()
-for i in range(3):
-    chop_wood()
-turn_up()
-chop_wood()
-turn_left()
-turn_down()
-`)
-  assert.deepEqual(commands, [
-    'move_up', 'move_up', 'turn_right', 'chop_wood', 'chop_wood', 'chop_wood',
-    'turn_up', 'chop_wood', 'turn_left', 'turn_down',
-  ])
-  let worker = createWorkerState(kingdomMap.worker)
+function gameFixture(animationMs = 0, start = kingdomMap.worker) {
   let resources = createResources(kingdomMap.trees)
+  let worker = createWorkerState(start)
+  const executed: WorkerCommand[] = []
   const game = new WorkerCommands(async direction => {
     const destination = getWorkerDestination({ ...kingdomMap, trees: resources.trees }, worker, direction)
+    if (animationMs) await new Promise(resolve => setTimeout(resolve, animationMs))
     worker = completeWorkerMove(worker, destination, direction)
     return destination !== null
   }, async () => {
@@ -92,71 +42,26 @@ turn_down()
   }, async direction => {
     worker = turnWorker(worker, direction)
     return true
-  })
-  await game.runCommands(commands)
-  assert.deepEqual(worker, { column: 5, row: 2, facing: 'down' })
-  assert.equal(resources.collectedWood, 4)
-  assert.equal(resources.trees.find(tree => tree.column === 5 && tree.row === 1)?.wood, 2)
-  assert.equal(resources.trees.some(tree => tree.column === 6 && tree.row === 2), false)
-  await assert.rejects(runner.run('for i in range(101):\n    turn_up()'), /limit 100/)
-})
+  }, () => worker, direction => getWorkerDestination({ ...kingdomMap, trees: resources.trees }, worker, direction) !== null,
+  () => getTreeAhead(resources, worker) !== undefined,
+  () => getSurroundings({ ...kingdomMap, trees: resources.trees }, worker))
+  const bridge: GameBridge = {
+    canMove: direction => game.canMove(direction),
+    treeAhead: () => game.treeAhead(),
+    getSurroundings: () => game.getSurroundings(),
+    getWorkerPosition: () => {
+      const position = game.getWorkerPosition()
+      return { x: position.column, y: position.row }
+    },
+    executeCommand: async command => {
+      executed.push(command)
+      return game.runCommands([command])
+    },
+  }
+  return { game, bridge, executed, state: () => ({ worker, resources }) }
+}
 
-test('prawdziwy Python: pętla for, zmienna, funkcja i kolejność komend', async () => {
-  const runner = new PythonRunner(createRealWorker)
-  const commands = await runner.run(`
-steps = 2
-def walk():
-    for i in range(steps):
-        move_right()
-    move_up()
-walk()
-move_left()
-move_down()
-`)
-  assert.deepEqual(commands, ['move_right', 'move_right', 'move_up', 'move_left', 'move_down'])
-  const moves: string[] = []
-  await new WorkerCommands(async direction => { moves.push(direction); return true }).runCommands(commands)
-  assert.deepEqual(moves, ['right', 'right', 'up', 'left', 'down'])
-})
-
-test('błąd Pythona po komendzie nie przekazuje żadnych ruchów do gry', async () => {
-  const runner = new PythonRunner(createRealWorker)
-  const moves: string[] = []
-  const game = new WorkerCommands(async direction => { moves.push(direction); return true })
-  await assert.rejects(async () => {
-    const commands = await runner.run('move_up()\nmissing_function()')
-    await game.runCommands(commands)
-  }, /NameError/)
-  assert.deepEqual(moves, [])
-  await assert.rejects(runner.run('for'), /SyntaxError/)
-})
-
-test('dopuszcza 100 komend, odrzuca 101 także po przechwyceniu wyjątku', async () => {
-  const runner = new PythonRunner(createRealWorker)
-  assert.equal((await runner.run('for i in range(100):\n    move_up()')).length, 100)
-  await assert.rejects(runner.run('for i in range(101):\n    move_up()'), /limit 100/)
-  await assert.rejects(runner.run(`
-try:
-    for i in range(101):
-        move_down()
-except Exception:
-    pass
-`), /limit 100/)
-})
-
-test('nieskończona pętla jest przerywana po 2 sekundach, następny program działa', async () => {
-  const runner = new PythonRunner(createRealWorker)
-  await assert.rejects(runner.run('move_up()\nwhile True:\n    pass'), /2 sekund/)
-  assert.deepEqual(await runner.run('move_left()'), ['move_left'])
-})
-
-test('blokuje równoczesne uruchomienia i nie przenosi zmiennych między programami', async () => {
-  const runner = new PythonRunner(createRealWorker)
-  const first = runner.run('x = 1\nmove_up()')
-  await assert.rejects(runner.run('move_down()'), /już działa/)
-  assert.deepEqual(await first, ['move_up'])
-  await assert.rejects(runner.run('print(x)'), /NameError/)
-})
+const flush = () => new Promise<void>(resolve => setImmediate(resolve))
 
 class FakeWorker implements PythonWorker {
   onmessage: PythonWorker['onmessage'] = null
@@ -165,32 +70,419 @@ class FakeWorker implements PythonWorker {
   terminated = false
   postMessage(message: PythonRequest) { this.requests.push(message) }
   terminate() { this.terminated = true }
-  send(data: unknown) { this.onmessage?.(new MessageEvent('message', { data })) }
+  send(data: object) {
+    const runId = this.requests[0].runId
+    this.onmessage?.(new MessageEvent('message', { data: { runId, ...data } }))
+  }
 }
 
-test('główny wątek sprawdza nazwy i rozmiar listy odebranej z Workera', async () => {
-  for (const commands of [['jump'], Array(101).fill('move_up'), 'move_up']) {
-    const worker = new FakeWorker()
-    const runner = new PythonRunner(() => worker)
-    const result = runner.run('move_up()')
-    worker.send({ type: 'ready' })
-    worker.send({ type: 'result', commands })
-    await assert.rejects(result, /Nieprawidłowa/)
-    assert.equal(worker.terminated, true)
+test('prawdziwy Python czeka na animację i odczytuje nową pozycję w pętli i funkcji', async () => {
+  const runner = new PythonRunner(createRealWorker)
+  const game = gameFixture(30)
+  await runner.run(`
+start = get_worker_position()
+assert type(start) is dict and type(start["x"]) is int
+assert start == {"x": 5, "y": 4}
+def walk(steps):
+    for i in range(steps):
+        move_right()
+        assert get_worker_position() == {"x": 6 + i, "y": 4}
+walk(2)
+move_left()
+move_down()
+move_up()
+`, game.bridge)
+  assert.deepEqual(game.executed, ['move_right', 'move_right', 'move_left', 'move_down', 'move_up'])
+  assert.deepEqual(game.bridge.getWorkerPosition(), { x: 6, y: 4 })
+  const copy = game.game.getWorkerPosition()
+  copy.column = 29
+  assert.equal(game.game.getWorkerPosition().column, 6)
+})
+
+test('get_surroundings zwraca prawdziwy słownik Python z aktualnymi sąsiadami po ruchu i ścinaniu', async () => {
+  const game = gameFixture(30)
+  await new PythonRunner(createRealWorker).run(`
+before = get_surroundings()
+assert type(before) is dict
+assert set(before) == {"up", "down", "left", "right"}
+assert all(type(value) is str for value in before.values())
+assert before == {"up": "empty", "down": "empty", "left": "castle", "right": "empty"}
+before["up"] = "castle" # lokalny słownik nie zmienia świata
+assert get_surroundings()["up"] == "empty"
+move_right()
+move_up()
+at_tree = get_surroundings()
+assert at_tree == {"up": "tree", "down": "empty", "left": "empty", "right": "empty"}
+for i in range(3):
+    assert get_surroundings()["up"] == "tree"
+    chop_wood()
+assert get_surroundings()["up"] == "empty"
+assert at_tree["up"] == "tree" # wcześniejszy odczyt jest kopią
+`, game.bridge)
+  assert.equal(game.state().resources.collectedWood, 3)
+})
+
+test('100 wywołań get_surroundings to 100 odczytów, a nie 400', async () => {
+  const runner = new PythonRunner(createRealWorker)
+  const game = gameFixture()
+  let reads = 0
+  const bridge: GameBridge = { ...game.bridge, getSurroundings: () => { reads++; return game.bridge.getSurroundings() } }
+  await runner.run('for i in range(100):\n    assert len(get_surroundings()) == 4', bridge)
+  assert.equal(reads, 100)
+  await assert.rejects(runner.run('for i in range(101):\n    get_surroundings()', bridge), /100 zapytań/)
+  assert.equal(reads, 200)
+})
+
+test('tree_ahead jest zarejestrowane w prawdziwym Pythonie i odczytuje drzewo przed robotnikiem', async () => {
+  const game = gameFixture(30)
+  const runner = new PythonRunner(createRealWorker)
+  await runner.run(`
+assert tree_ahead() in (True, False)
+assert type(tree_ahead()) is bool
+assert tree_ahead() is False
+move_right()
+move_up()
+assert tree_ahead() is True
+turn_right()
+assert tree_ahead() is False
+turn_up()
+for i in range(3):
+    assert tree_ahead() is True
+    chop_wood()
+assert tree_ahead() is False
+`, game.bridge)
+  assert.equal(game.state().resources.collectedWood, 3)
+  await assert.rejects(runner.run('for i in range(101):\n    tree_ahead()', game.bridge), /100 zapytań/)
+})
+
+test('ruch, obroty i ścinanie wykonują się kolejno; usunięte drzewo odblokowuje pole', async () => {
+  const game = gameFixture()
+  await new PythonRunner(createRealWorker).run(`
+move_up()
+move_up()
+turn_right()
+for i in range(3):
+    chop_wood()
+move_right()
+assert get_worker_position() == {"x": 6, "y": 2}
+turn_up()
+turn_left()
+turn_down()
+`, game.bridge)
+  assert.equal(game.state().resources.collectedWood, 3)
+  assert.equal(game.state().resources.trees.some(tree => tree.column === 6 && tree.row === 2), false)
+  assert.deepEqual(game.state().worker, { column: 6, row: 2, facing: 'down' })
+  assert.deepEqual(game.executed, ['move_up', 'move_up', 'turn_right', 'chop_wood', 'chop_wood', 'chop_wood', 'move_right', 'turn_up', 'turn_left', 'turn_down'])
+})
+
+test('kolizja nie przerywa Pythona i nie zmienia pozycji; ścinanie bez drzewa nic nie zbiera', async () => {
+  const game = gameFixture()
+  await new PythonRunner(createRealWorker).run(`
+move_right()
+move_up()
+assert get_worker_position() == {"x": 6, "y": 3}
+move_up() # drzewo
+assert get_worker_position() == {"x": 6, "y": 3}
+turn_down()
+chop_wood()
+move_left()
+move_left() # zamek
+assert get_worker_position() == {"x": 5, "y": 3}
+`, game.bridge)
+  assert.equal(game.state().resources.collectedWood, 0)
+})
+
+test('błąd Pythona zachowuje ukończone ruchy i zebrane drewno, pomija dalsze działania', async () => {
+  const runner = new PythonRunner(createRealWorker)
+  const game = gameFixture()
+  await assert.rejects(runner.run(`
+move_right()
+move_up()
+chop_wood()
+missing_function()
+move_down()
+`, game.bridge), /NameError/)
+  assert.deepEqual(game.executed, ['move_right', 'move_up', 'chop_wood'])
+  assert.equal(game.state().resources.collectedWood, 1)
+  assert.deepEqual(game.bridge.getWorkerPosition(), { x: 6, y: 3 })
+  await assert.rejects(runner.run('for', game.bridge), /SyntaxError/)
+  assert.equal(game.executed.length, 3)
+  await runner.run('move_down()', game.bridge)
+  assert.deepEqual(game.bridge.getWorkerPosition(), { x: 6, y: 4 })
+})
+
+test('100 komend i 100 odczytów to osobne limity; 101. komenda nie trafia do silnika', async () => {
+  const runner = new PythonRunner(createRealWorker)
+  const game = gameFixture()
+  await runner.run('for i in range(100):\n    turn_up()\n    get_worker_position()', game.bridge)
+  assert.equal(game.executed.length, 100)
+  await assert.rejects(runner.run(`
+try:
+    for i in range(101):
+        turn_down()
+except Exception:
+    pass
+`, game.bridge), /limit 100 komend/)
+  assert.equal(game.executed.length, 200)
+  await assert.rejects(runner.run(`
+try:
+    for i in range(101):
+        if i % 2 == 0:
+            get_worker_position()
+        else:
+            can_move_right()
+except Exception:
+    pass
+`, game.bridge), /limit 100 zapytań/)
+})
+
+test('can_move w Pythonie zwraca bool, uwzględnia ruch i wycięcie drzewa w tym samym programie', async () => {
+  const game = gameFixture(30)
+  await new PythonRunner(createRealWorker).run(`
+for query in [can_move_up, can_move_down, can_move_left, can_move_right]:
+    assert type(query()) is bool
+assert can_move_left() is False # zamek
+assert can_move_up() is True
+assert can_move_down() is True
+assert can_move_right() is True
+if can_move_right():
+    move_right()
+move_up()
+assert get_worker_position() == {"x": 6, "y": 3}
+assert can_move_up() is False # drzewo
+chop_wood()
+assert can_move_up() is False
+chop_wood()
+assert can_move_up() is False
+chop_wood()
+assert can_move_up() is True
+while can_move_up():
+    move_up()
+assert get_worker_position() == {"x": 6, "y": 0}
+assert can_move_up() is False # granica mapy
+`, game.bridge)
+  assert.equal(game.state().resources.collectedWood, 3)
+  assert.equal(game.state().worker.row, 0)
+})
+
+test('sprawdzanie ruchu obejmuje wolne pola, cztery granice, drzewa, zamek, wodę i góry bez zmiany stanu', () => {
+  const cases = [
+    { column: 5, row: 4, expected: [true, true, false, true] }, // zamek po lewej
+    { column: 6, row: 3, expected: [false, true, true, true] }, // drzewo u góry
+    { column: 0, row: 0, expected: [false, true, false, true] },
+    { column: 29, row: 12, expected: [true, true, true, false] },
+    { column: 0, row: 19, expected: [true, false, false, true] },
+    { column: 18, row: 4, expected: [true, false, true, false] }, // woda
+    { column: 26, row: 0, expected: [false, false, true, false] }, // góry
+  ]
+  for (const { column, row, expected } of cases) {
+    const game = gameFixture(0, { column, row })
+    const before = structuredClone(game.state())
+    assert.deepEqual((['up', 'down', 'left', 'right'] as const).map(direction => game.game.canMove(direction)), expected, `${column},${row}`)
+    assert.deepEqual(game.state(), before)
+    assert.deepEqual(game.executed, [])
+    game.game.dispose()
+    assert.throws(() => game.game.canMove('up'), /niedostępny/)
   }
 })
 
-test('czeka na załadowanie środowiska, a dispose kończy Worker i zwalnia blokadę', async () => {
+test('animacja dłuższa niż 2 sekundy nie zużywa budżetu obliczeń', async () => {
+  const game = gameFixture(2200)
+  await new PythonRunner(createRealWorker).run('move_right()\nassert get_worker_position() == {"x": 6, "y": 4}', game.bridge)
+  assert.equal(game.executed.length, 1)
+})
+
+test('nieskończona pętla po ruchu podlega timeoutowi, kolejny program działa', async () => {
+  const game = gameFixture()
+  const runner = new PythonRunner(createRealWorker)
+  await assert.rejects(runner.run('move_right()\nwhile True:\n    pass', game.bridge), /2 sekund/)
+  assert.deepEqual(game.bridge.getWorkerPosition(), { x: 6, y: 4 })
+  await runner.run('move_left()', game.bridge)
+  assert.deepEqual(game.bridge.getWorkerPosition(), { x: 5, y: 4 })
+})
+
+test('błędy silnika wracają do Pythona, a zmienne nie przechodzą do następnego uruchomienia', async () => {
+  const game = gameFixture()
+  const runner = new PythonRunner(createRealWorker)
+  const bridge: GameBridge = { ...game.bridge, executeCommand: async () => { throw new Error('Błąd ruchu') } }
+  await assert.rejects(runner.run('move_up()', bridge), /Błąd ruchu/)
+  await assert.rejects(runner.run('get_worker_position()', { ...game.bridge, getWorkerPosition: () => { throw new Error('Błąd odczytu') } }), /Błąd odczytu/)
+  await runner.run('x = 1', game.bridge)
+  await assert.rejects(runner.run('print(x)', game.bridge), /NameError/)
+})
+
+test('brak JSPI zgłasza błąd przed wykonaniem ruchu', async () => {
+  const game = gameFixture()
+  await assert.rejects(new PythonRunner(() => createRealWorker(false)).run('move_right()', game.bridge), /wymaga JSPI/)
+  assert.deepEqual(game.executed, [])
+})
+
+test('anulowanie podczas animacji blokuje nowy program do jej końca i ignoruje spóźnioną odpowiedź', async () => {
   const worker = new FakeWorker()
   const runner = new PythonRunner(() => worker)
-  const result = runner.run('move_up()')
-  assert.deepEqual(worker.requests, [{ type: 'init' }])
+  const game = gameFixture()
+  let complete!: (value: boolean) => void
+  let calls = 0
+  const bridge: GameBridge = { ...game.bridge, executeCommand: () => { calls++; return new Promise(resolve => { complete = resolve }) } }
+  const result = runner.run('test', bridge)
+  await assert.rejects(runner.run('other', bridge), /już działa/)
+  worker.send({ type: 'ready' })
+  const receiveLate = worker.onmessage!
+  worker.send({ type: 'command', requestId: 1, command: 'move_right' })
+  await flush()
+  assert.equal(calls, 1)
+  const count = worker.requests.length
   runner.dispose()
   await assert.rejects(result, /anulowano/)
-  assert.equal(worker.terminated, true)
-  const next = runner.run('move_down()')
+  assert(worker.terminated)
+  await assert.rejects(runner.run('other', bridge), /już działa/)
+  complete(true)
+  await flush()
+  receiveLate(new MessageEvent('message', { data: { type: 'command', runId: worker.requests[0].runId, requestId: 2, command: 'move_up' } }))
+  assert.equal(calls, 1)
+  assert.equal(worker.requests.length, count)
+  const next = runner.run('other', game.bridge)
+  worker.send({ type: 'ready' }) // FakeWorker nadal używa starego runId, więc jest ignorowany.
+  const runId = worker.requests.at(-1)!.runId
+  worker.send({ type: 'ready', runId })
+  worker.send({ type: 'result', runId })
+  await next
+})
+
+test('budżet obliczeń sumuje odcinki między animacjami; brak odpowiedzi ma osobny timeout', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  let now = 0
+  t.mock.method(performance, 'now', () => now)
+  const worker = new FakeWorker()
+  const runner = new PythonRunner(() => worker)
+  const game = gameFixture()
+  let complete!: (value: boolean) => void
+  const bridge: GameBridge = { ...game.bridge, executeCommand: () => new Promise(resolve => { complete = resolve }) }
+  const result = runner.run('test', bridge)
   worker.send({ type: 'ready' })
-  assert.deepEqual(worker.requests.at(-1), { type: 'run', code: 'move_down()' })
-  worker.send({ type: 'result', commands: ['move_down'] })
-  assert.deepEqual(await next, ['move_down'])
+  now = 1200
+  t.mock.timers.tick(1200)
+  worker.send({ type: 'command', requestId: 1, command: 'move_right' })
+  await flush()
+  now = 7200
+  t.mock.timers.tick(6000)
+  assert.equal(worker.terminated, false)
+  complete(true)
+  await flush()
+  now = 8001
+  t.mock.timers.tick(801)
+  await assert.rejects(result, /2 sekund/)
+
+  const stuckWorker = new FakeWorker()
+  const stuckRunner = new PythonRunner(() => stuckWorker)
+  const stuck = stuckRunner.run('test', bridge)
+  stuckWorker.send({ type: 'ready' })
+  stuckWorker.send({ type: 'command', requestId: 1, command: 'move_up' })
+  await flush()
+  t.mock.timers.tick(10_000)
+  await assert.rejects(stuck, /10 sekund/)
+  complete(true)
+  await flush()
+})
+
+test('brak odpowiedzi na odczyt podlega limitowi obliczeń', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const worker = new FakeWorker()
+  const runner = new PythonRunner(() => worker)
+  const result = runner.run('test', { ...gameFixture().bridge, getWorkerPosition: () => new Promise(() => {}) })
+  worker.send({ type: 'ready' })
+  worker.send({ type: 'query', requestId: 1, operation: 'get_worker_position' })
+  t.mock.timers.tick(2000)
+  await assert.rejects(result, /2 sekund/)
+})
+
+test('zachowuje błędy inicjalizacji, limit ładowania oraz anulowanie przed gotowością', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const workers: FakeWorker[] = []
+  const runner = new PythonRunner(() => {
+    const worker = new FakeWorker()
+    workers.push(worker)
+    return worker
+  })
+  const game = gameFixture()
+  const loadError = runner.run('test', game.bridge)
+  workers[0].send({ type: 'error', message: 'Nie udało się pobrać Pyodide' })
+  await assert.rejects(loadError, /pobrać Pyodide/)
+  const timeout = runner.run('test', game.bridge)
+  t.mock.timers.tick(60_000)
+  await assert.rejects(timeout, /60 sekund/)
+  const cancelled = runner.run('test', game.bridge)
+  runner.dispose()
+  await assert.rejects(cancelled, /anulowano/)
+  assert(workers.every(worker => worker.terminated))
+  assert.deepEqual(game.executed, [])
+})
+
+test('protokół ignoruje stary runId i zwraca wynik lub błąd z właściwym requestId', async () => {
+  const worker = new FakeWorker()
+  const runner = new PythonRunner(() => worker)
+  const game = gameFixture()
+  const result = runner.run('test', game.bridge)
+  const runId = worker.requests[0].runId
+  worker.send({ type: 'ready' })
+  worker.send({ type: 'command', runId: 'old', requestId: 1, command: 'move_right' })
+  assert.deepEqual(game.executed, [])
+  worker.send({ type: 'command', requestId: 1, command: 'move_right' })
+  await flush()
+  assert.deepEqual(worker.requests.at(-1), { type: 'response', runId, requestId: 1, ok: true, value: true })
+  worker.send({ type: 'query', requestId: 2, operation: 'get_worker_position' })
+  await flush()
+  assert.deepEqual(worker.requests.at(-1), { type: 'response', runId, requestId: 2, ok: true, value: { x: 6, y: 4 } })
+  worker.send({ type: 'command', requestId: 3, command: 'jump' })
+  await flush()
+  assert.deepEqual(worker.requests.at(-1), { type: 'response', runId, requestId: 3, ok: false, error: 'Nieznana komenda robotnika.' })
+  worker.send({ type: 'query', requestId: 4, operation: 'unknown' })
+  await flush()
+  assert.equal(worker.requests.at(-1)!.type, 'response')
+  worker.send({ type: 'query', requestId: 5, operation: 'can_move', direction: 'up' })
+  await flush()
+  assert.deepEqual(worker.requests.at(-1), { type: 'response', runId, requestId: 5, ok: true, value: true })
+  worker.send({ type: 'query', requestId: 6, operation: 'can_move', direction: 'diagonal' })
+  await flush()
+  assert.deepEqual(worker.requests.at(-1), { type: 'response', runId, requestId: 6, ok: false, error: 'Nieprawidłowy kierunek zapytania.' })
+  worker.send({ type: 'query', requestId: 7, operation: 'get_surroundings', column: 29, row: 19 })
+  await flush()
+  assert.deepEqual(worker.requests.at(-1), {
+    type: 'response', runId, requestId: 7, ok: true,
+    value: { up: 'empty', down: 'empty', left: 'empty', right: 'empty' },
+  })
+  assert.deepEqual(game.executed, ['move_right'])
+  worker.send({ type: 'result' })
+  await result
+})
+
+test('główny wątek pilnuje obu limitów i odrzuca powtórzone lub równoległe żądania', async () => {
+  for (const type of ['command', 'query'] as const) {
+    const worker = new FakeWorker()
+    const runner = new PythonRunner(() => worker)
+    const result = runner.run('test', gameFixture().bridge)
+    const rejected = assert.rejects(result, /limit 100/)
+    worker.send({ type: 'ready' })
+    for (let requestId = 1; requestId <= 101; requestId++) {
+      worker.send({ type, requestId, command: 'turn_up', operation: 'get_worker_position' })
+      await flush()
+    }
+    await rejected
+  }
+  const worker = new FakeWorker()
+  const runner = new PythonRunner(() => worker)
+  const result = runner.run('test', gameFixture().bridge)
+  worker.send({ type: 'ready' })
+  worker.send({ type: 'query', requestId: 1, operation: 'get_worker_position' })
+  await flush()
+  worker.send({ type: 'query', requestId: 1, operation: 'get_worker_position' })
+  await assert.rejects(result, /requestId/)
+
+  const parallelWorker = new FakeWorker()
+  const parallelRunner = new PythonRunner(() => parallelWorker)
+  const parallel = parallelRunner.run('test', { ...gameFixture().bridge, getWorkerPosition: () => new Promise(() => {}) })
+  parallelWorker.send({ type: 'ready' })
+  parallelWorker.send({ type: 'query', requestId: 1, operation: 'get_worker_position' })
+  parallelWorker.send({ type: 'command', requestId: 2, command: 'move_up' })
+  await assert.rejects(parallel, /kolejność/)
 })

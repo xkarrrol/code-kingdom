@@ -1,3 +1,5 @@
+import { sandboxTerrain } from './terrain.ts'
+
 export interface TilePosition {
   column: number
   row: number
@@ -8,6 +10,7 @@ export const kingdomMap = {
   columns: 30,
   rows: 20,
   tileSize: 64,
+  terrain: sandboxTerrain,
   castle: { column: 3, row: 3, columns: 2, rows: 2 },
   trees: [
     { column: 1, row: 1 },

@@ -64,7 +64,7 @@ export function zoomCamera(state: CameraState, cursor: Point, wheelDelta: number
   return constrain({
     x: state.x + cursor.x / state.zoom - cursor.x / zoom,
     y: state.y + cursor.y / state.zoom - cursor.y / zoom,
-    zoom, following: false,
+    zoom, following: state.following,
   }, area)
 }
 

@@ -1,4 +1,6 @@
 import type { Direction } from './movement'
+import type { TilePosition } from './map'
+import type { Surroundings } from './surroundings'
 
 type MoveCommand = 'move_up' | 'move_down' | 'move_left' | 'move_right'
 type TurnCommand = 'turn_up' | 'turn_down' | 'turn_left' | 'turn_right'
@@ -25,19 +27,52 @@ export class WorkerCommands {
   private readonly move: (direction: Direction) => Promise<boolean>
   private readonly chop: () => Promise<boolean>
   private readonly turn: (direction: Direction) => Promise<boolean>
+  private readonly readPosition?: () => TilePosition
+  private readonly checkMove?: (direction: Direction) => boolean
+  private readonly checkTreeAhead?: () => boolean
+  private readonly readSurroundings?: () => Surroundings
 
   constructor(
     move: (direction: Direction) => Promise<boolean>,
     chop: () => Promise<boolean> = async () => false,
     turn: (direction: Direction) => Promise<boolean> = async () => false,
+    readPosition?: () => TilePosition,
+    checkMove?: (direction: Direction) => boolean,
+    checkTreeAhead?: () => boolean,
+    readSurroundings?: () => Surroundings,
   ) {
     this.move = move
     this.chop = chop
     this.turn = turn
+    this.readPosition = readPosition
+    this.checkMove = checkMove
+    this.checkTreeAhead = checkTreeAhead
+    this.readSurroundings = readSurroundings
+  }
+
+  getWorkerPosition(): TilePosition {
+    if (this.disposed || !this.readPosition) throw new Error('Stan robotnika jest niedostępny.')
+    const position = this.readPosition()
+    return { column: position.column, row: position.row }
   }
 
   get isRunning() {
     return this.running
+  }
+
+  canMove(direction: Direction): boolean {
+    if (this.disposed || !this.checkMove) throw new Error('Stan mapy jest niedostępny.')
+    return this.checkMove(direction)
+  }
+
+  treeAhead(): boolean {
+    if (this.disposed || !this.checkTreeAhead) throw new Error('Stan drzew jest niedostępny.')
+    return this.checkTreeAhead()
+  }
+
+  getSurroundings(): Surroundings {
+    if (this.disposed || !this.readSurroundings) throw new Error('Stan otoczenia jest niedostępny.')
+    return { ...this.readSurroundings() }
   }
 
   executeCommand(command: WorkerCommand): Promise<boolean> {

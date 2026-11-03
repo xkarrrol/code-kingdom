@@ -15,10 +15,15 @@ export function createResources(trees: readonly TilePosition[]): ResourceState {
   return { trees: trees.map(tree => ({ ...tree, wood: 3 })), collectedWood: 0 }
 }
 
+// Wspólny wybór drzewa dla odczytu świata i ścinania.
+export function getTreeAhead(state: ResourceState, worker: WorkerState): TreeResource | undefined {
+  const front = getFacingTile(worker)
+  return state.trees.find(tree => tree.wood > 0 && tree.column === front.column && tree.row === front.row)
+}
+
 // Czysta logika zasobów: żadnych zależności od Reacta, Phasera ani Pythona.
 export function chopWood(state: ResourceState, worker: WorkerState): ResourceState {
-  const front = getFacingTile(worker)
-  const target = state.trees.find(tree => tree.wood > 0 && tree.column === front.column && tree.row === front.row)
+  const target = getTreeAhead(state, worker)
   if (!target) return state
 
   return {

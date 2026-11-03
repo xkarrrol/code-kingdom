@@ -1,46 +1,103 @@
-import type { PyodideInterface } from 'pyodide'
-import type { WorkerCommand } from '../game/commands'
-import { isWorkerCommand, MAX_COMMANDS } from './messages.ts'
+﻿import type { PyodideInterface } from 'pyodide'
+import type { WorkerBridge } from './WorkerBridge'
+import { supportsJSPI } from './WorkerBridge.ts'
 
 // Ten moduł jest wykonywany wyłącznie w Workerze. Nie otrzymuje silnika gry.
-export async function executePython(pyodide: PyodideInterface, code: string): Promise<WorkerCommand[]> {
-  const commands: WorkerCommand[] = []
-  let exceeded = false
-  const record = (command: unknown) => {
-    if (!isWorkerCommand(command)) throw new Error('Nieznana komenda robotnika.')
-    if (commands.length >= MAX_COMMANDS) {
-      exceeded = true
-      throw new Error(`Przekroczono limit ${MAX_COMMANDS} komend.`)
-    }
-    commands.push(command)
+export async function executePython(
+  pyodide: PyodideInterface, code: string, bridge: WorkerBridge,
+  jspi = supportsJSPI(WebAssembly),
+): Promise<void> {
+  const requireJSPI = () => {
+    if (!jspi) throw new Error('Komunikacja z grą wymaga JSPI. Ta przeglądarka nie udostępnia wymaganej obsługi.')
   }
-  const globals = pyodide.toPy({ __record_command: record })
+  const globals = pyodide.toPy({
+    __execute_command: (command: Parameters<WorkerBridge['executeCommand']>[0]) => {
+      requireJSPI()
+      return bridge.executeCommand(command)
+    },
+    __get_worker_position: () => {
+      requireJSPI()
+      return bridge.getWorkerPosition()
+    },
+    __can_move: (direction: Parameters<WorkerBridge['canMove']>[0]) => {
+      requireJSPI()
+      return bridge.canMove(direction)
+    },
+    __tree_ahead: () => {
+      requireJSPI()
+      return bridge.treeAhead()
+    },
+    __get_surroundings: () => {
+      requireJSPI()
+      return bridge.getSurroundings()
+    },
+  })
 
   try {
     pyodide.runPython(`
-def _make_move(record, command):
-    def move():
-        record(command)
-    return move
+def _make_command(execute, command):
+    from pyodide.ffi import run_sync
+    def action():
+        run_sync(execute(command))
+    return action
 
-move_up = _make_move(__record_command, "move_up")
-move_down = _make_move(__record_command, "move_down")
-move_left = _make_move(__record_command, "move_left")
-move_right = _make_move(__record_command, "move_right")
-chop_wood = _make_move(__record_command, "chop_wood")
-turn_up = _make_move(__record_command, "turn_up")
-turn_down = _make_move(__record_command, "turn_down")
-turn_left = _make_move(__record_command, "turn_left")
-turn_right = _make_move(__record_command, "turn_right")
-del _make_move, __record_command
+move_up = _make_command(__execute_command, "move_up")
+move_down = _make_command(__execute_command, "move_down")
+move_left = _make_command(__execute_command, "move_left")
+move_right = _make_command(__execute_command, "move_right")
+chop_wood = _make_command(__execute_command, "chop_wood")
+turn_up = _make_command(__execute_command, "turn_up")
+turn_down = _make_command(__execute_command, "turn_down")
+turn_left = _make_command(__execute_command, "turn_left")
+turn_right = _make_command(__execute_command, "turn_right")
+del _make_command, __execute_command
+
+def _make_position_query(query):
+    from pyodide.ffi import run_sync
+    def get_worker_position():
+        position = run_sync(query())
+        return {"x": int(position.x), "y": int(position.y)}
+    return get_worker_position
+
+get_worker_position = _make_position_query(__get_worker_position)
+del _make_position_query, __get_worker_position
+
+def _make_can_move(query, direction):
+    from pyodide.ffi import run_sync
+    def can_move():
+        return bool(run_sync(query(direction)))
+    return can_move
+
+can_move_up = _make_can_move(__can_move, "up")
+can_move_down = _make_can_move(__can_move, "down")
+can_move_left = _make_can_move(__can_move, "left")
+can_move_right = _make_can_move(__can_move, "right")
+del _make_can_move, __can_move
+
+def _make_tree_ahead(query):
+    from pyodide.ffi import run_sync
+    def tree_ahead():
+        return bool(run_sync(query()))
+    return tree_ahead
+
+tree_ahead = _make_tree_ahead(__tree_ahead)
+del _make_tree_ahead, __tree_ahead
+
+def _make_surroundings_query(query):
+    from pyodide.ffi import run_sync
+    def get_surroundings():
+        nearby = run_sync(query())
+        return {"up": str(nearby.up), "down": str(nearby.down),
+                "left": str(nearby.left), "right": str(nearby.right)}
+    return get_surroundings
+
+get_surroundings = _make_surroundings_query(__get_surroundings)
+del _make_surroundings_query, __get_surroundings
 `, { globals })
 
     const result = await pyodide.runPythonAsync(code, { globals, filename: 'player.py' })
-    // Python może zakończyć program wyrażeniem zwracającym obiekt.
     if (result instanceof pyodide.ffi.PyProxy) result.destroy()
-    // Przechwycenie wyjątku w kodzie gracza nie znosi limitu.
-    if (exceeded) throw new Error(`Przekroczono limit ${MAX_COMMANDS} komend.`)
-    return commands
+    bridge.checkLimits()
   } finally {
     globals.destroy()
   }

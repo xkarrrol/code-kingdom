@@ -1,7 +1,9 @@
 import type { kingdomMap, TilePosition } from './map'
+import { isTerrainWalkable } from './terrain.ts'
 
 export type Direction = 'up' | 'down' | 'left' | 'right'
-type MovementMap = Pick<typeof kingdomMap, 'columns' | 'rows' | 'trees' | 'castle'>
+export type MovementMap = Pick<typeof kingdomMap, 'columns' | 'rows' | 'trees' | 'castle' | 'terrain'>
+export type TileType = 'empty' | 'tree' | 'water' | 'mountain' | 'castle' | 'boundary'
 
 const steps: Record<Direction, TilePosition> = {
   up: { column: 0, row: -1 },
@@ -23,14 +25,24 @@ export function getWorkerDestination(
   direction: Direction,
 ): TilePosition | null {
   const destination = getAdjacentTile(position, direction)
-  const { column, row } = destination
+  return getTileType(map, destination) === 'empty' ? destination : null
+}
+
+// Jeden opis pola dla kolizji i odczytów świata; kolejność przeszkód pozostaje ta sama.
+export function getTileType(map: MovementMap, position: TilePosition): TileType {
+  const { column, row } = position
 
   if (column < 0 || column >= map.columns || row < 0 || row >= map.rows) {
-    return null
+    return 'boundary'
+  }
+
+  const terrain = map.terrain[row]?.[column]
+  if (!isTerrainWalkable(terrain)) {
+    return terrain === 'water' || terrain === 'mountain' ? terrain : 'boundary'
   }
 
   if (map.trees.some(tree => tree.column === column && tree.row === row)) {
-    return null
+    return 'tree'
   }
 
   const castle = map.castle
@@ -38,8 +50,8 @@ export function getWorkerDestination(
     column >= castle.column && column < castle.column + castle.columns &&
     row >= castle.row && row < castle.row + castle.rows
   ) {
-    return null
+    return 'castle'
   }
 
-  return destination
+  return 'empty'
 }

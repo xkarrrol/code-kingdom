@@ -9,6 +9,9 @@ import type { WorkerCommands, WorkerCommand } from '../game/commands'
 import type { WorkerStatus } from '../game/workerState'
 import type { TilePosition } from '../game/map'
 import type { ControlState } from '../game/controlModes'
+import type { SelectionAction, SelectionView } from '../game/selection'
+import ObjectInfoPanel from './ObjectInfoPanel'
+import type { CameraKeyboardAction } from '../game/cameraKeyboard'
 
 const facingLabels = { up: 'góra ↑', down: 'dół ↓', left: 'lewo ←', right: 'prawo →' }
 
@@ -27,11 +30,12 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
   const sceneRef = useRef<KingdomScene | null>(null)
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus>({ facing: 'down', message: '' })
   const [hoveredTile, setHoveredTile] = useState<TilePosition | null>(null)
+  const [selectionView, setSelectionView] = useState<SelectionView>({ object: null, infoOpen: false })
   const controlsRef = useRef(controls)
   controlsRef.current = controls
 
   useEffect(() => {
-    sceneRef.current?.setExploreView(controls.mode === 'EXPLORE', controls.gridVisible)
+    sceneRef.current?.setExploreView(controls.mode === 'EXPLORE')
   }, [controls])
 
   useEffect(() => {
@@ -39,6 +43,10 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
     if (!container) return
 
     let game: Phaser.Game | undefined
+    const onSelectionKey = (event: Event) => sceneRef.current?.selectObject((event as CustomEvent<SelectionAction>).detail)
+    container.addEventListener('explore-selection', onSelectionKey)
+    const onCameraKey = (event: Event) => sceneRef.current?.cameraKeyboardAction((event as CustomEvent<CameraKeyboardAction>).detail)
+    container.addEventListener('explore-camera', onCameraKey)
     const removeCameraControls = bindCameraControls(container, {
       pan: (x, y) => sceneRef.current?.panView(x, y),
       zoom: (delta, x, y) => sceneRef.current?.zoomView(delta, x, y),
@@ -48,8 +56,8 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
     })
     // StrictMode sprawdza efekt dwa razy. Timer pozwala anulować pierwszy start.
     const startTimer = window.setTimeout(() => {
-      const scene = new KingdomScene(onCommandsReady, onWoodChanged, setWorkerStatus, setHoveredTile)
-      scene.setExploreView(controlsRef.current.mode === 'EXPLORE', controlsRef.current.gridVisible)
+      const scene = new KingdomScene(onCommandsReady, onWoodChanged, setWorkerStatus, setHoveredTile, setSelectionView)
+      scene.setExploreView(controlsRef.current.mode === 'EXPLORE')
       sceneRef.current = scene
       game = new Phaser.Game({
         type: Phaser.AUTO,
@@ -66,6 +74,8 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
     return () => {
       window.clearTimeout(startTimer)
       removeCameraControls()
+      container.removeEventListener('explore-selection', onSelectionKey)
+      container.removeEventListener('explore-camera', onCameraKey)
       sceneRef.current?.commands?.dispose()
       sceneRef.current = null
       onCommandsReady(null)
@@ -78,11 +88,13 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
       <p aria-live="polite">Drewno: {wood}</p>
       <p>Kierunek patrzenia: {facingLabels[workerStatus.facing]}</p>
       <p role="status">{workerStatus.message}</p>
-      {controls.mode === 'EXPLORE' && <p>Pole (kolumna, wiersz): {hoveredTile ? `${hoveredTile.column}, ${hoveredTile.row}` : '—'} · G: siatka {controls.gridVisible ? 'włączona' : 'wyłączona'}</p>}
+      {controls.mode === 'EXPLORE' && <p>Pole (kolumna, wiersz): {hoveredTile ? `${hoveredTile.column}, ${hoveredTile.row}` : '—'}</p>}
+      {controls.mode === 'EXPLORE' && selectionView.object && <p>Zaznaczono: {selectionView.object.name}</p>}
+      {controls.mode === 'EXPLORE' && selectionView.infoOpen && selectionView.object && <ObjectInfoPanel object={selectionView.object} />}
       <button type="button" onClick={() => void onRunCommands(exampleCommands)} disabled={!canRunCommands}>
         Test commands
       </button>
-      <p id="map-controls">Strzałki: ruch robotnika po wybraniu mapy. Przeciąganie prawym przyciskiem: kamera. Scroll: zoom. Podwójne kliknięcie: powrót do robotnika i śledzenie.</p>
+      <p id="map-controls">EXPLORE: H/J/K/L — kamera lewo/dół/góra/prawo; F — powrót do robotnika; I — edytor. Tab / Shift+Tab — wybór obiektu; Enter — informacje; Esc — zamknij panel. Strzałki: ruch robotnika. Prawy przycisk: kamera. Scroll: zoom. Podwójne kliknięcie: śledzenie robotnika.</p>
       <div className="map-scroll">
         <div
           ref={containerRef}
@@ -91,7 +103,7 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
           role="group"
           tabIndex={0}
           aria-describedby="map-controls"
-          aria-label="Widok świata królestwa: 30 na 20 pól trawy, zamek, drzewa i jeden robotnik."
+          aria-label="Świat królestwa: 30 na 20 pól trawy, lasu, wody, skał i ścieżek; zamek, drzewa i robotnik."
         />
       </div>
     </>

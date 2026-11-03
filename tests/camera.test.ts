@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createCameraState, followWorker, gameViewport, getCameraScroll, panCamera, updateCamera, zoomCamera } from '../src/game/camera.ts'
 import { kingdomMap } from '../src/game/map.ts'
+import { WorkerCommands } from '../src/game/commands.ts'
 
 const area = {
   worldWidth: kingdomMap.columns * kingdomMap.tileSize,
@@ -40,14 +41,16 @@ test('przeciągnięcie uwzględnia zoom, wyłącza śledzenie i nie przesuwa rob
   assert.equal(panCamera(initial, { x: 0, y: 0 }, area), initial)
 })
 
-test('zoom pozostaje w zakresie 0.8–1.5 i przechodzi do ręcznego widoku', () => {
+test('zoom pozostaje w zakresie 0.8–1.5 i zachowuje bieżący tryb śledzenia', () => {
   const initial = createCameraState({ x: 800, y: 600 }, area)
   const near = zoomCamera(initial, { x: 200, y: 200 }, -100_000, area)
   assert.equal(near.zoom, 1.5)
-  assert.equal(near.following, false)
+  assert.equal(near.following, true)
   const far = zoomCamera(near, { x: 200, y: 200 }, 100_000, area)
   assert.equal(far.zoom, 0.8)
   assert.equal(zoomCamera(far, { x: 200, y: 200 }, 100, area), far)
+  const manual = panCamera(initial, { x: 10, y: 0 }, area)
+  assert.equal(zoomCamera(manual, { x: 200, y: 200 }, -100, area).following, false)
 })
 
 test('przybliżanie i oddalanie zachowują punkt świata pod kursorem', () => {
@@ -57,7 +60,7 @@ test('przybliżanie i oddalanie zachowują punkt świata pod kursorem', () => {
     const next = zoomCamera(initial, cursor, delta, area)
     assert(Math.abs(initial.x + cursor.x / initial.zoom - next.x - cursor.x / next.zoom) < 1e-9)
     assert(Math.abs(initial.y + cursor.y / initial.zoom - next.y - cursor.y / next.zoom) < 1e-9)
-    assert.equal(updateCamera(next, { x: 900, y: 900 }, area, 16), next)
+    assert.equal(next.following, initial.following)
   }
 })
 
@@ -103,4 +106,43 @@ test('wygładzanie śledzenia nie zależy od liczby klatek', () => {
   const twice = updateCamera(updateCamera(initial, worker, area, 16), worker, area, 16)
   assert(Math.abs(single.x - twice.x) < 1e-9)
   assert(Math.abs(single.y - twice.y) < 1e-9)
+})
+
+test('każda klatka animacji jest śledzona dla pojedynczego ruchu i sekwencji Pythona', async () => {
+  for (const source of ['arrows', 'python']) {
+    const graphics = { x: 600, y: 600 }
+    let state = createCameraState(graphics, area)
+    state = zoomCamera(state, { x: 256, y: 256 }, -100, area)
+    const positions: number[] = []
+    const runner = new WorkerCommands(async () => {
+      for (let frame = 1; frame <= 12; frame++) {
+        graphics.x = 600 + frame / 12 * 64
+        const previous = state.x
+        state = updateCamera(state, graphics, area, 15)
+        assert(state.x > previous, `${source}: kamera reaguje przed końcem kroku`)
+        assert(state.x < graphics.x - area.viewWidth / state.zoom / 2)
+        positions.push(state.x)
+        await Promise.resolve()
+      }
+      return true
+    })
+    if (source === 'arrows') await runner.executeCommand('move_right')
+    else await runner.runCommands(['move_right'])
+    assert.equal(positions.length, 12)
+    assert.equal(state.following, true)
+  }
+})
+
+test('ręczny widok pozostaje nieruchomy podczas animacji aż do ponownego centrowania', () => {
+  let state = createCameraState({ x: 600, y: 600 }, area)
+  state = panCamera(state, { x: -100, y: 20 }, area)
+  const manual = state
+  for (let frame = 0; frame < 12; frame++) {
+    state = updateCamera(state, { x: 600 + frame * 5, y: 600 }, area, 15)
+    assert.equal(state, manual)
+  }
+  state = followWorker(state, { x: 660, y: 600 }, area)
+  assert.equal(state.following, true)
+  assert.equal(state.x + area.viewWidth / state.zoom / 2, 660)
+  assert(updateCamera(state, { x: 680, y: 600 }, area, 15).x > state.x)
 })

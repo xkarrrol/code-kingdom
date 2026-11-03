@@ -2,14 +2,20 @@ import Phaser from 'phaser'
 import { kingdomMap } from './map'
 import type { TilePosition } from './map'
 import { getWorkerDestination } from './movement'
+import { getSurroundings } from './surroundings'
 import type { Direction } from './movement'
 import { WorkerCommands } from './commands'
 import type { WorkerCommand } from './commands'
-import { chopWood, createResources } from './resources'
+import { chopWood, createResources, getTreeAhead } from './resources'
 import { completeWorkerMove, createWorkerState, turnWorker } from './workerState'
 import type { WorkerStatus } from './workerState'
 import { createCameraState, followWorker, gameViewport, getCameraScroll, getHoveredTile, panCamera, updateCamera, zoomCamera } from './camera'
 import type { CameraState } from './camera'
+import { applySelectionAction, getSelectableObjects, getSelectedObject, reconcileSelection } from './selection'
+import type { SelectionAction, SelectionState, SelectionView, SelectableObject } from './selection'
+import { cameraKeyboardDelta, updateCameraKeys } from './cameraKeyboard'
+import type { CameraKeyboardAction, CameraPanKey } from './cameraKeyboard'
+import { renderTerrain } from './renderTerrain'
 
 const arrowCommands: Record<string, WorkerCommand | undefined> = {
   ArrowUp: 'move_up',
@@ -32,23 +38,30 @@ export class KingdomScene extends Phaser.Scene {
   private treeGraphics = new Map<string, Phaser.GameObjects.Graphics>()
   private cameraState?: CameraState
   private exploreMode = false
-  private gridVisible = false
   private gridGraphics?: Phaser.GameObjects.Graphics
   private pointerPosition?: { x: number; y: number }
   private lastHoveredTile: TilePosition | null = null
   private readonly onHoverChanged?: (tile: TilePosition | null) => void
+  private selection: SelectionState = { selectedId: null, infoOpen: false }
+  private selectionGraphics?: Phaser.GameObjects.Graphics
+  private selectionCameraTarget: string | null = null
+  private selectionSnapshot = ''
+  private readonly onSelectionChanged?: (view: SelectionView) => void
+  private cameraPanKeys = new Set<CameraPanKey>()
 
   constructor(
     onCommandsReady?: (commands: WorkerCommands) => void,
     onWoodChanged?: (wood: number) => void,
     onStatusChanged?: (status: WorkerStatus) => void,
     onHoverChanged?: (tile: TilePosition | null) => void,
+    onSelectionChanged?: (view: SelectionView) => void,
   ) {
     super('KingdomScene')
     this.onCommandsReady = onCommandsReady
     this.onWoodChanged = onWoodChanged
     this.onStatusChanged = onStatusChanged
     this.onHoverChanged = onHoverChanged
+    this.onSelectionChanged = onSelectionChanged
   }
 
   create() {
@@ -58,8 +71,7 @@ export class KingdomScene extends Phaser.Scene {
     this.treeGraphics.clear()
     this.onWoodChanged?.(this.resources.collectedWood)
 
-    graphics.fillStyle(0x79ad57)
-    graphics.fillRect(0, 0, columns * tileSize, rows * tileSize)
+    renderTerrain(graphics, kingdomMap.terrain, tileSize)
     this.gridGraphics = this.add.graphics().setDepth(1)
     this.gridGraphics.lineStyle(1, 0xffffff, 0.18)
     for (let column = 0; column <= columns; column++) {
@@ -68,7 +80,6 @@ export class KingdomScene extends Phaser.Scene {
     for (let row = 0; row <= rows; row++) {
       this.gridGraphics.lineBetween(0, row * tileSize, columns * tileSize, row * tileSize)
     }
-    this.gridGraphics.setVisible(this.exploreMode && this.gridVisible)
 
     for (const tree of this.resources.trees) {
       const treeGraphic = this.add.graphics()
@@ -104,6 +115,11 @@ export class KingdomScene extends Phaser.Scene {
     this.drawWorker(this.workerGraphics)
     const center = this.tileCenter(worker)
     this.workerGraphics.setPosition(center.x, center.y)
+    this.selection = { selectedId: null, infoOpen: false }
+    this.selectionGraphics = this.add.graphics().setDepth(2)
+    this.selectionCameraTarget = null
+    this.cameraPanKeys.clear()
+    this.updateSelectionView()
     this.cameraState = createCameraState(center, this.cameraArea())
     this.cameras.main.setBounds(0, 0, columns * tileSize, rows * tileSize)
     this.applyCamera()
@@ -111,6 +127,10 @@ export class KingdomScene extends Phaser.Scene {
       direction => this.moveWorker(direction),
       () => this.chopWorkerWood(),
       direction => this.turnWorkerFacing(direction),
+      () => this.workerState,
+      direction => getWorkerDestination({ ...kingdomMap, trees: this.resources.trees }, this.workerState, direction) !== null,
+      () => getTreeAhead(this.resources, this.workerState) !== undefined,
+      () => getSurroundings({ ...kingdomMap, trees: this.resources.trees }, this.workerState),
     )
     this.onCommandsReady?.(this.commands)
 
@@ -120,6 +140,9 @@ export class KingdomScene extends Phaser.Scene {
       this.workerGraphics = undefined
       this.cameraState = undefined
       this.gridGraphics = undefined
+      this.selectionGraphics = undefined
+      this.selectionCameraTarget = null
+      this.cameraPanKeys.clear()
       this.pointerPosition = undefined
       // Zwolnij oczekującą sekwencję również przy zamknięciu sceny.
       this.finishMove?.(false)
@@ -144,11 +167,74 @@ export class KingdomScene extends Phaser.Scene {
     }
   }
 
-  setExploreView(explore: boolean, gridVisible: boolean) {
+  setExploreView(explore: boolean) {
     this.exploreMode = explore
-    this.gridVisible = gridVisible
-    this.gridGraphics?.setVisible(explore && gridVisible)
+    if (!explore) {
+      this.cameraPanKeys.clear()
+      this.selection = { ...this.selection, infoOpen: false }
+      this.selectionCameraTarget = null
+    }
+    this.updateSelectionView()
     this.updateHoveredTile()
+  }
+
+  cameraKeyboardAction(action: CameraKeyboardAction) {
+    if (action.type === 'release' || action.type === 'clear') {
+      updateCameraKeys(this.cameraPanKeys, action)
+      return
+    }
+    if (!this.exploreMode) return
+    updateCameraKeys(this.cameraPanKeys, action)
+    if (action.type === 'follow') this.followWorkerView()
+  }
+
+  selectObject(action: SelectionAction) {
+    if (!this.exploreMode) return
+    const objects = this.selectableObjects()
+    this.selection = applySelectionAction(objects, this.selection, action)
+    if (action === 'select-next' || action === 'select-previous') {
+      this.selectionCameraTarget = this.selection.selectedId
+      if (this.cameraState) this.cameraState = { ...this.cameraState, following: false }
+    }
+    this.updateSelectionView()
+  }
+
+  private selectableObjects() {
+    return getSelectableObjects(this.workerState, kingdomMap.castle, this.resources.trees)
+  }
+
+  private objectCenter(object: SelectableObject) {
+    if (object.id === 'worker' && this.workerGraphics) return { x: this.workerGraphics.x, y: this.workerGraphics.y }
+    return {
+      x: (object.column + object.columns / 2) * kingdomMap.tileSize,
+      y: (object.row + object.rows / 2) * kingdomMap.tileSize,
+    }
+  }
+
+  private updateSelectionView() {
+    const objects = this.selectableObjects()
+    this.selection = reconcileSelection(objects, this.selection)
+    if (this.selectionCameraTarget && !objects.some(object => object.id === this.selectionCameraTarget)) {
+      this.selectionCameraTarget = null
+    }
+    const object = this.exploreMode ? getSelectedObject(objects, this.selection) : null
+    const graphics = this.selectionGraphics
+    graphics?.clear()
+    if (object && graphics) {
+      const center = this.objectCenter(object)
+      const width = object.columns * kingdomMap.tileSize
+      const height = object.rows * kingdomMap.tileSize
+      graphics.fillStyle(0xffdf75, 0.12)
+      graphics.fillRect(center.x - width / 2, center.y - height / 2, width, height)
+      graphics.lineStyle(2, 0xffdf75, 0.9)
+      graphics.strokeRect(center.x - width / 2, center.y - height / 2, width, height)
+    }
+    const view = { object, infoOpen: this.exploreMode && this.selection.infoOpen }
+    const snapshot = JSON.stringify(view)
+    if (snapshot !== this.selectionSnapshot) {
+      this.selectionSnapshot = snapshot
+      this.onSelectionChanged?.(view)
+    }
   }
 
   hoverView(x?: number, y?: number) {
@@ -166,6 +252,7 @@ export class KingdomScene extends Phaser.Scene {
 
   panView(x: number, y: number) {
     if (!this.cameraState) return
+    if (x !== 0 || y !== 0) this.selectionCameraTarget = null
     this.cameraState = panCamera(this.cameraState, { x, y }, this.cameraArea())
     this.applyCamera()
   }
@@ -178,6 +265,8 @@ export class KingdomScene extends Phaser.Scene {
 
   followWorkerView() {
     if (!this.cameraState || !this.workerGraphics) return
+    this.cameraPanKeys.clear()
+    this.selectionCameraTarget = null
     this.cameraState = followWorker(this.cameraState, this.workerGraphics, this.cameraArea())
     this.applyCamera()
   }
@@ -200,6 +289,22 @@ export class KingdomScene extends Phaser.Scene {
 
   update(_time: number, delta: number) {
     if (!this.workerGraphics || !this.cameraState) return
+    if (this.exploreMode) {
+      const pan = cameraKeyboardDelta(this.cameraPanKeys, delta)
+      if (pan.x !== 0 || pan.y !== 0) this.panView(pan.x, pan.y)
+    }
+    this.updateSelectionView()
+    const selectedTarget = this.exploreMode && this.selectionCameraTarget
+      ? this.selectableObjects().find(object => object.id === this.selectionCameraTarget) : null
+    if (selectedTarget) {
+      this.cameraState = {
+        ...updateCamera({ ...this.cameraState, following: true }, this.objectCenter(selectedTarget), this.cameraArea(), delta),
+        following: false,
+      }
+      this.applyCamera()
+      return
+    }
+    // Śledzimy pozycję graficzną w trakcie każdej animacji, także przy fokusie w edytorze.
     this.cameraState = updateCamera(this.cameraState, this.workerGraphics, this.cameraArea(), delta)
     this.applyCamera()
   }

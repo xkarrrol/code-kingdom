@@ -12,7 +12,7 @@ export default function App() {
   const appRef = useRef<HTMLElement>(null)
   const editorRef = useRef<HTMLTextAreaElement>(null)
   const mapRef = useRef<HTMLDivElement>(null)
-  const [controls, setControls] = useState<ControlState>({ mode: 'CODE', gridVisible: false })
+  const [controls, setControls] = useState<ControlState>({ mode: 'CODE' })
   useEffect(() => {
     if (!appRef.current || !editorRef.current || !mapRef.current) return
     return bindControlModes(appRef.current, editorRef.current, mapRef.current, setControls)
@@ -37,8 +37,18 @@ export default function App() {
     commands.manualInputEnabled = false
     setIsRunning(true)
     try {
-      const sequence = typeof input === 'string' ? await python.run(input) : input
-      return await commands.runCommands(sequence)
+      if (typeof input !== 'string') return await commands.runCommands(input)
+      await python.run(input, {
+        getWorkerPosition: () => {
+          const position = commands.getWorkerPosition()
+          return { x: position.column, y: position.row }
+        },
+        executeCommand: command => commands.runCommands([command]),
+        canMove: direction => commands.canMove(direction),
+        treeAhead: () => commands.treeAhead(),
+        getSurroundings: () => commands.getSurroundings(),
+      })
+      return true
     } finally {
       commands.manualInputEnabled = true
       runLock.current = false
