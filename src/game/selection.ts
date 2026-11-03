@@ -1,5 +1,7 @@
 import type { TilePosition } from './map'
 import type { TreeResource } from './resources'
+import type { PlacedBuilding } from './buildingData'
+import { buildingDefinitions } from './buildingData.ts'
 
 export interface SelectableObject extends TilePosition {
   id: string
@@ -8,6 +10,7 @@ export interface SelectableObject extends TilePosition {
   columns: number
   rows: number
   wood?: number
+  stone?: number
 }
 export interface SelectionState { selectedId: string | null; infoOpen: boolean }
 export interface SelectionView { object: SelectableObject | null; infoOpen: boolean }
@@ -18,13 +21,23 @@ export function getSelectableObjects(
   worker: TilePosition,
   castle: TilePosition & { columns: number; rows: number },
   trees: readonly TreeResource[],
+  stones: readonly TreeResource[] = [],
+  buildings: readonly PlacedBuilding[] = [],
 ): SelectableObject[] {
   return [
     { ...worker, id: 'worker', kind: 'unit', name: 'Robotnik', columns: 1, rows: 1 },
     { ...castle, id: 'castle', kind: 'building', name: 'Zamek' },
-    ...trees.filter(tree => tree.wood > 0).map(tree => ({
+    ...buildings.map(building => ({
+      ...building, id: `building:${building.id}`, kind: 'building' as const,
+      name: buildingDefinitions[building.kind].name,
+    })),
+    ...trees.filter(tree => tree.amount > 0).map(tree => ({
       ...tree, id: `tree:${tree.column},${tree.row}`, kind: 'resource' as const,
-      name: 'Drzewo', columns: 1, rows: 1,
+      name: 'Drzewo', wood: tree.amount, columns: 1, rows: 1,
+    })),
+    ...stones.filter(stone => stone.amount > 0).map(stone => ({
+      ...stone, id: `stone:${stone.column},${stone.row}`, kind: 'resource' as const,
+      name: 'Złoże kamienia', stone: stone.amount, columns: 1, rows: 1,
     })),
   ]
 }

@@ -3,7 +3,8 @@ import type { BridgeResponse, PythonRequest, WorkerPosition, WorldValue } from '
 import type { Direction } from '../game/movement'
 import type { Surroundings } from '../game/surroundings'
 import type { Inventory } from '../game/resources'
-import { COMPUTE_TIMEOUT_MS, isDirection, isInventory, isSurroundings, isWorkerCommand, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES, RESPONSE_TIMEOUT_MS } from './messages.ts'
+import type { SawmillInventory } from '../game/productionData'
+import { COMPUTE_TIMEOUT_MS, isDirection, isInventory, isSawmillInventory, isSurroundings, isWorkerCommand, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES, RESPONSE_TIMEOUT_MS } from './messages.ts'
 
 let nextRunId = 0
 
@@ -18,8 +19,10 @@ export interface GameBridge {
   getWorkerPosition: () => WorkerPosition | Promise<WorkerPosition>
   canMove: (direction: Direction) => boolean | Promise<boolean>
   treeAhead: () => boolean | Promise<boolean>
+  stoneAhead: () => boolean | Promise<boolean>
   getSurroundings: () => Surroundings | Promise<Surroundings>
   getInventory: () => Inventory | Promise<Inventory>
+  getSawmillInventory: () => SawmillInventory | Promise<SawmillInventory>
   executeCommand: (command: WorkerCommand) => Promise<boolean>
 }
 
@@ -136,6 +139,9 @@ export class PythonRunner {
               } else if (data.operation === 'tree_ahead') {
                 value = await game.treeAhead()
                 if (typeof value !== 'boolean') throw new Error('Nieprawidłowy wynik sprawdzania drzewa.')
+              } else if (data.operation === 'stone_ahead') {
+                value = await game.stoneAhead()
+                if (typeof value !== 'boolean') throw new Error('Nieprawidłowy wynik sprawdzania złoża.')
               } else if (data.operation === 'get_surroundings') {
                 const nearby = await game.getSurroundings()
                 if (!isSurroundings(nearby)) throw new Error('Nieprawidłowy opis otoczenia.')
@@ -143,7 +149,11 @@ export class PythonRunner {
               } else if (data.operation === 'get_inventory') {
                 const inventory = await game.getInventory()
                 if (!isInventory(inventory)) throw new Error('Nieprawidłowy ekwipunek robotnika.')
-                value = { wood: inventory.wood, capacity: inventory.capacity }
+                value = { wood: inventory.wood, stone: inventory.stone, planks: inventory.planks, capacity: inventory.capacity }
+              } else if (data.operation === 'get_sawmill_inventory') {
+                const inventory = await game.getSawmillInventory()
+                if (!isSawmillInventory(inventory)) throw new Error('Nieprawidłowy magazyn tartaku.')
+                value = { wood: inventory.wood, planks: inventory.planks }
               } else throw new Error('Nieobsługiwane zapytanie.')
             }
             response = { type: 'response', runId, requestId, ok: true, value }

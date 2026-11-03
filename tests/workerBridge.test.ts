@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict'
+import assert from 'node:assert/strict'
 import test from 'node:test'
 import { WorkerBridge } from '../src/python/WorkerBridge.ts'
 import type { PythonMessage } from '../src/python/messages.ts'
@@ -90,18 +90,55 @@ test('tree_ahead przechodzi przez protokół, wymaga boolean i dzieli limit odcz
   await assert.rejects(result, /Nieprawidłowa odpowiedź/)
 })
 
+test('stone_ahead używa identyfikatorów i wspólnego limitu 100 odczytów', async () => {
+  const sent: PythonMessage[] = []
+  const bridge = new WorkerBridge('stone', message => sent.push(message))
+  for (let requestId = 1; requestId <= 100; requestId++) {
+    const query = bridge.stoneAhead()
+    assert.deepEqual(sent.at(-1), { type: 'query', runId: 'stone', requestId, operation: 'stone_ahead' })
+    bridge.receive({ type: 'response', runId: 'stone', requestId, ok: true, value: true })
+    assert.equal(await query, true)
+  }
+  await assert.rejects(bridge.getInventory(), /100 zapytań/)
+  assert.equal(sent.length, 100)
+})
+
+test('magazyn tartaku ma własny typ odpowiedzi, pasujące identyfikatory i wspólny limit odczytów', async () => {
+  const sent: PythonMessage[] = []
+  const bridge = new WorkerBridge('sawmill', message => sent.push(message))
+  for (let requestId = 1; requestId <= 100; requestId++) {
+    const result = bridge.getSawmillInventory()
+    assert.deepEqual(sent.at(-1), { type: 'query', runId: 'sawmill', requestId, operation: 'get_sawmill_inventory' })
+    bridge.receive({ type: 'response', runId: 'old', requestId, ok: true, value: { wood: 1, planks: 0 } })
+    bridge.receive({ type: 'response', runId: 'sawmill', requestId, ok: true, value: { wood: 10, planks: 10 } })
+    assert.deepEqual(await result, { wood: 10, planks: 10 })
+  }
+  await assert.rejects(bridge.getInventory(), /100 zapytań/)
+  assert.equal(sent.length, 100)
+})
+
+test('magazyn tartaku odrzuca niepoprawne ilości i nie ujawnia dodatkowych danych', async () => {
+  for (const value of [false, { wood: 11, planks: 0 }, { wood: 0, planks: 11 }, { wood: -1, planks: 0 },
+    { wood: 1.5, planks: 0 }, { wood: 0 }, { wood: 1, planks: 1, capacity: 10 }]) {
+    const bridge = new WorkerBridge('invalid', () => {})
+    const result = bridge.getSawmillInventory()
+    bridge.receive({ type: 'response', runId: 'invalid', requestId: 1, ok: true, value } as Parameters<WorkerBridge['receive']>[0])
+    await assert.rejects(result, /Nieprawidłowa odpowiedź/)
+  }
+})
+
 test('get_inventory weryfikuje ekwipunek i korzysta ze wspólnego limitu odczytów', async () => {
   const sent: PythonMessage[] = []
   const bridge = new WorkerBridge('inventory', message => sent.push(message))
   for (let requestId = 1; requestId <= 100; requestId++) {
     const result = bridge.getInventory()
     assert.deepEqual(sent.at(-1), { type: 'query', runId: 'inventory', requestId, operation: 'get_inventory' })
-    bridge.receive({ type: 'response', runId: 'inventory', requestId, ok: true, value: { wood: 5, capacity: 5 } })
-    assert.deepEqual(await result, { wood: 5, capacity: 5 })
+    bridge.receive({ type: 'response', runId: 'inventory', requestId, ok: true, value: { wood: 5, stone: 0, planks: 0, capacity: 5 } })
+    assert.deepEqual(await result, { wood: 5, stone: 0, planks: 0, capacity: 5 })
   }
   await assert.rejects(bridge.getWorkerPosition(), /100 zapytań/)
   assert.equal(sent.length, 100)
-  for (const value of [{ wood: 6, capacity: 5 }, { wood: -1, capacity: 5 }, { wood: 1.5, capacity: 5 }, { wood: 1, capacity: 10 }]) {
+  for (const value of [{ wood: 6, stone: 0, planks: 0, capacity: 5 }, { wood: -1, stone: 0, planks: 0, capacity: 5 }, { wood: 1.5, stone: 0, planks: 0, capacity: 5 }, { wood: 1, stone: 0, planks: 0, capacity: 10 }, { wood: 3, stone: 3, planks: 0, capacity: 5 }, { wood: 0, stone: -1, planks: 0, capacity: 5 }, { wood: 2, stone: 1, planks: 3, capacity: 5 }, { wood: 0, stone: 0, planks: -1, capacity: 5 }]) {
     const invalid = new WorkerBridge('invalid', () => {})
     const result = invalid.getInventory()
     invalid.receive({ type: 'response', runId: 'invalid', requestId: 1, ok: true, value })

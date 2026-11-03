@@ -6,8 +6,8 @@ import { getSurroundings } from './surroundings'
 import type { Direction } from './movement'
 import { WorkerCommands } from './commands'
 import type { WorkerCommand } from './commands'
-import { chopWood, createResources, depositWood, getInventory, getTreeAhead, getWoodStatus, WOOD_CAPACITY } from './resources'
-import type { WoodStatus } from './resources'
+import { createResources, depositResource, gatherResource, getInventory, getResourceAhead, getResourceStatus, inventorySize, naturalResourceDefinitions, INVENTORY_CAPACITY } from './resources'
+import type { HarvestableResourceKind, ResourceKind, ResourceStatus } from './resources'
 import { completeWorkerMove, createWorkerState, turnWorker } from './workerState'
 import type { WorkerStatus } from './workerState'
 import { createCameraState, followWorker, gameViewport, getCameraScroll, getHoveredTile, panCamera, updateCamera, zoomCamera } from './camera'
@@ -17,6 +17,12 @@ import type { SelectionAction, SelectionState, SelectionView, SelectableObject }
 import { cameraKeyboardDelta, updateCameraKeys } from './cameraKeyboard'
 import type { CameraKeyboardAction, CameraPanKey } from './cameraKeyboard'
 import { renderTerrain } from './renderTerrain'
+import { buildingDefinitions, sawmillSite, getBuildingArea } from './buildingData'
+import type { PlacedBuilding } from './buildingData'
+import { buildSawmill } from './construction'
+import { drawBuilding, drawBuildingSite } from './renderBuildings'
+import { collectPlanks, depositToSawmill, getSawmillInventory, processWood } from './production'
+import type { ProductionState, ProductionResult } from './production'
 
 const arrowCommands: Record<string, WorkerCommand | undefined> = {
   ArrowUp: 'move_up',
@@ -33,10 +39,13 @@ export class KingdomScene extends Phaser.Scene {
   private finishMove?: (moved: boolean) => void
   commands?: WorkerCommands
   private readonly onCommandsReady?: (commands: WorkerCommands) => void
-  private readonly onWoodChanged?: (wood: WoodStatus) => void
+  private readonly onResourcesChanged?: (resources: ResourceStatus) => void
   private readonly onStatusChanged?: (status: WorkerStatus) => void
-  private resources = createResources(kingdomMap.trees)
-  private treeGraphics = new Map<string, Phaser.GameObjects.Graphics>()
+  private resources = createResources(kingdomMap.trees, kingdomMap.stones)
+  private resourceGraphics = new Map<string, Phaser.GameObjects.Graphics>()
+  private buildings: readonly PlacedBuilding[] = []
+  private siteGraphics?: Phaser.GameObjects.Graphics
+  private siteLabel?: Phaser.GameObjects.Text
   private cameraState?: CameraState
   private exploreMode = false
   private gridGraphics?: Phaser.GameObjects.Graphics
@@ -52,14 +61,14 @@ export class KingdomScene extends Phaser.Scene {
 
   constructor(
     onCommandsReady?: (commands: WorkerCommands) => void,
-    onWoodChanged?: (wood: WoodStatus) => void,
+    onResourcesChanged?: (resources: ResourceStatus) => void,
     onStatusChanged?: (status: WorkerStatus) => void,
     onHoverChanged?: (tile: TilePosition | null) => void,
     onSelectionChanged?: (view: SelectionView) => void,
   ) {
     super('KingdomScene')
     this.onCommandsReady = onCommandsReady
-    this.onWoodChanged = onWoodChanged
+    this.onResourcesChanged = onResourcesChanged
     this.onStatusChanged = onStatusChanged
     this.onHoverChanged = onHoverChanged
     this.onSelectionChanged = onSelectionChanged
@@ -68,9 +77,20 @@ export class KingdomScene extends Phaser.Scene {
   create() {
     const graphics = this.add.graphics()
     const { columns, rows, tileSize, castle, worker } = kingdomMap
-    this.resources = createResources(kingdomMap.trees)
-    this.treeGraphics.clear()
-    this.onWoodChanged?.(getWoodStatus(this.resources))
+    this.resources = createResources(kingdomMap.trees, kingdomMap.stones)
+    this.resourceGraphics.clear()
+    this.buildings = []
+    this.siteGraphics = this.add.graphics().setDepth(1)
+    drawBuildingSite(this.siteGraphics, sawmillSite, tileSize)
+    const siteArea = getBuildingArea(sawmillSite)
+    const siteDefinition = buildingDefinitions[sawmillSite.kind]
+    this.siteLabel = this.add.text(
+      (siteArea.column + siteArea.columns / 2) * tileSize,
+      (siteArea.row + siteArea.rows / 2) * tileSize,
+      `Miejsce: ${siteDefinition.name}\n${siteDefinition.cost.wood} drewna · ${siteDefinition.cost.stone} kamienie`,
+      { fontSize: '12px', color: '#fff4c4', backgroundColor: '#3b3429', align: 'center', padding: { x: 4, y: 3 } },
+    ).setOrigin(0.5).setDepth(1)
+    this.reportResources()
 
     renderTerrain(graphics, kingdomMap.terrain, tileSize)
     this.gridGraphics = this.add.graphics().setDepth(1)
@@ -82,12 +102,14 @@ export class KingdomScene extends Phaser.Scene {
       this.gridGraphics.lineBetween(0, row * tileSize, columns * tileSize, row * tileSize)
     }
 
-    for (const tree of this.resources.trees) {
-      const treeGraphic = this.add.graphics()
-      this.drawTree(treeGraphic, tree)
-      this.treeGraphics.set(`${tree.column},${tree.row}`, treeGraphic)
+    for (const kind of Object.keys(naturalResourceDefinitions) as HarvestableResourceKind[]) {
+      for (const node of this.resources[naturalResourceDefinitions[kind].nodes]) {
+        const graphic = this.add.graphics()
+        if (kind === 'wood') this.drawTree(graphic, node)
+        else this.drawStone(graphic, node)
+        this.resourceGraphics.set(`${kind}:${node.column},${node.row}`, graphic)
+      }
     }
-
     // Zamek jest wyśrodkowany w obrębie swojego obszaru 2 × 2 pól.
     const x = (castle.column + castle.columns / 2) * tileSize
     const y = (castle.row + castle.rows / 2) * tileSize
@@ -126,14 +148,33 @@ export class KingdomScene extends Phaser.Scene {
     this.applyCamera()
     this.commands = new WorkerCommands(
       direction => this.moveWorker(direction),
-      () => this.chopWorkerWood(),
+      () => this.gatherWorkerResource('wood'),
       direction => this.turnWorkerFacing(direction),
       () => this.workerState,
-      direction => getWorkerDestination({ ...kingdomMap, trees: this.resources.trees }, this.workerState, direction) !== null,
-      () => getTreeAhead(this.resources, this.workerState) !== undefined,
-      () => getSurroundings({ ...kingdomMap, trees: this.resources.trees }, this.workerState),
-      () => this.depositWorkerWood(),
+      direction => getWorkerDestination(this.worldMap(), this.workerState, direction) !== null,
+      () => getResourceAhead(this.resources, this.workerState, 'wood') !== undefined,
+      () => getSurroundings(this.worldMap(), this.workerState),
+      () => this.depositWorkerResource('wood'),
       () => getInventory(this.resources),
+      {
+        mine: () => this.gatherWorkerResource('stone'),
+        deposit: () => this.depositWorkerResource('stone'),
+        ahead: () => getResourceAhead(this.resources, this.workerState, 'stone') !== undefined,
+      },
+      () => this.buildWorkerSawmill(),
+      {
+        deposit: () => this.runProduction(depositToSawmill),
+        process: () => this.runProduction(processWood),
+        collect: () => this.runProduction(collectPlanks),
+        depositPlanks: () => this.depositWorkerResource('planks'),
+        inventory: () => {
+          try { return getSawmillInventory(this.buildings) }
+          catch (error) {
+            this.reportStatus(error instanceof Error ? error.message : String(error))
+            throw error
+          }
+        },
+      },
     )
     this.onCommandsReady?.(this.commands)
 
@@ -144,6 +185,8 @@ export class KingdomScene extends Phaser.Scene {
       this.cameraState = undefined
       this.gridGraphics = undefined
       this.selectionGraphics = undefined
+      this.siteGraphics = undefined
+      this.siteLabel = undefined
       this.selectionCameraTarget = null
       this.cameraPanKeys.clear()
       this.pointerPosition = undefined
@@ -203,7 +246,7 @@ export class KingdomScene extends Phaser.Scene {
   }
 
   private selectableObjects() {
-    return getSelectableObjects(this.workerState, kingdomMap.castle, this.resources.trees)
+    return getSelectableObjects(this.workerState, kingdomMap.castle, this.resources.trees, this.resources.stones, this.buildings)
   }
 
   private objectCenter(object: SelectableObject) {
@@ -317,7 +360,7 @@ export class KingdomScene extends Phaser.Scene {
     if (this.pendingMove) await this.pendingMove
     if (!this.workerGraphics) return false
 
-    const destination = getWorkerDestination({ ...kingdomMap, trees: this.resources.trees }, this.workerState, direction)
+    const destination = getWorkerDestination(this.worldMap(), this.workerState, direction)
     if (!destination) return false
 
     this.isMoving = true
@@ -354,46 +397,95 @@ export class KingdomScene extends Phaser.Scene {
     return true
   }
 
-  private async chopWorkerWood(): Promise<boolean> {
-    // Także pierwsze ścinanie czeka na ewentualny krok rozpoczęty strzałką.
+  private worldMap() {
+    return { ...kingdomMap, trees: this.resources.trees, stones: this.resources.stones, buildings: this.buildings }
+  }
+
+  private reportResources() {
+    const inventory = this.buildings.some(building => building.kind === 'sawmill')
+      ? getSawmillInventory(this.buildings) : null
+    this.onResourcesChanged?.(getResourceStatus(this.resources, inventory))
+  }
+
+  private async runProduction(operation: (state: ProductionState, worker: TilePosition) => ProductionResult): Promise<boolean> {
     if (this.pendingMove) await this.pendingMove
     if (!this.workerGraphics) return false
-    const next = chopWood(this.resources, this.workerState)
+    const result = operation({ resources: this.resources, buildings: this.buildings }, this.workerState)
+    this.reportStatus(result.message)
+    if (!result.ok) return false
+    this.resources = result.state.resources
+    this.buildings = result.state.buildings
+    this.reportResources()
+    return true
+  }
+
+  private async buildWorkerSawmill(): Promise<boolean> {
+    if (this.pendingMove) await this.pendingMove
+    if (!this.workerGraphics) return false
+    const result = buildSawmill({ resources: this.resources, buildings: this.buildings }, this.worldMap(), this.workerState)
+    this.reportStatus(result.message)
+    if (!result.ok) return false
+    this.resources = result.state.resources
+    this.buildings = result.state.buildings
+    this.siteGraphics?.destroy()
+    this.siteLabel?.destroy()
+    this.siteGraphics = undefined
+    this.siteLabel = undefined
+    const building = this.buildings.find(item => item.id === sawmillSite.id)!
+    drawBuilding(this.add.graphics(), building, kingdomMap.tileSize)
+    this.reportResources()
+    this.updateSelectionView()
+    return true
+  }
+
+  private async gatherWorkerResource(kind: HarvestableResourceKind): Promise<boolean> {
+    if (this.pendingMove) await this.pendingMove
+    if (!this.workerGraphics) return false
+    const next = gatherResource(this.resources, this.workerState, kind)
     if (next === this.resources) {
-      this.reportStatus(this.resources.workerWood >= WOOD_CAPACITY
-        ? 'Ekwipunek jest pełny. Dostarcz drewno do zamku.'
-        : 'Przed robotnikiem nie ma drzewa. Podejdź do drzewa z odpowiedniej strony.')
+      this.reportStatus(inventorySize(this.resources) >= INVENTORY_CAPACITY
+        ? 'Ekwipunek jest pełny. Dostarcz surowce do zamku.'
+        : kind === 'wood' ? 'Przed robotnikiem nie ma drzewa.' : 'Przed robotnikiem nie ma złoża kamienia.')
       return false
     }
-
-    for (const tree of this.resources.trees) {
-      if (!next.trees.some(remaining => remaining.column === tree.column && remaining.row === tree.row)) {
-        const key = `${tree.column},${tree.row}`
-        this.treeGraphics.get(key)?.destroy()
-        this.treeGraphics.delete(key)
+    const key = naturalResourceDefinitions[kind].nodes
+    for (const node of this.resources[key]) {
+      if (!next[key].some(remaining => remaining.column === node.column && remaining.row === node.row)) {
+        const id = `${kind}:${node.column},${node.row}`
+        this.resourceGraphics.get(id)?.destroy()
+        this.resourceGraphics.delete(id)
       }
     }
     this.resources = next
-    this.onWoodChanged?.(getWoodStatus(next))
-    this.reportStatus('Zebrano 1 drewno.')
+    this.reportResources()
+    this.reportStatus(kind === 'wood' ? 'Zebrano 1 drewno.' : 'Wydobyto 1 kamień.')
     return true
   }
 
-  private async depositWorkerWood(): Promise<boolean> {
+  private async depositWorkerResource(kind: ResourceKind): Promise<boolean> {
     if (this.pendingMove) await this.pendingMove
     if (!this.workerGraphics) return false
-    const next = depositWood(this.resources, this.workerState, kingdomMap.castle)
+    const next = depositResource(this.resources, this.workerState, kingdomMap.castle, kind)
     if (next === this.resources) {
-      this.reportStatus(this.resources.workerWood === 0
-        ? 'Ekwipunek jest pusty.' : 'Stań na polu obok zamku, aby dostarczyć drewno.')
+      this.reportStatus(this.resources.worker[kind] === 0
+        ? 'Brak tego surowca w ekwipunku.' : 'Stań na polu obok zamku, aby dostarczyć surowce.')
       return false
     }
     this.resources = next
-    this.onWoodChanged?.(getWoodStatus(next))
-    this.reportStatus('Drewno dostarczono do zamku.')
+    this.reportResources()
+    this.reportStatus(kind === 'wood' ? 'Drewno dostarczono do zamku.' : kind === 'stone' ? 'Kamień dostarczono do zamku.' : 'Deski dostarczono do zamku.')
     return true
   }
 
+  private drawStone(graphics: Phaser.GameObjects.Graphics, position: TilePosition) {
+    const { x, y } = this.tileCenter(position)
+    graphics.fillStyle(0x526575)
+    graphics.fillTriangle(x - 25, y + 20, x - 16, y - 15, x + 19, y + 20)
+    graphics.fillStyle(0x94a8b8)
+    graphics.fillTriangle(x - 11, y + 21, x + 8, y - 23, x + 27, y + 21)
+    graphics.fillStyle(0xc7d4df)
+    graphics.fillTriangle(x - 3, y - 2, x + 8, y - 23, x + 15, y - 3)
+  }
   private reportStatus(message: string) {
     this.onStatusChanged?.({ facing: this.workerState.facing, message })
   }

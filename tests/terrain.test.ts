@@ -53,7 +53,7 @@ test('zamek, robotnik i drzewa znajdują się na dostępnym podłożu w granicac
 
 test('kolizje sprawdzają teren każdego pola ze wszystkich czterech stron', () => {
   // Wyłączamy obiekty drzew, żeby sprawdzić samą warstwę terenu.
-  const map = { ...kingdomMap, trees: [] }
+  const map = { ...kingdomMap, trees: [], stones: [] }
   const approaches: [Direction, number, number][] = [
     ['up', 0, 1], ['down', 0, -1], ['left', 1, 0], ['right', -1, 0],
   ]
@@ -89,6 +89,7 @@ test('robotnik może opuścić start i dojść do wszystkich dostępnych obszar�
     for (let column = 0; column < kingdomMap.columns; column++) {
       if (!isTerrainWalkable(kingdomMap.terrain[row][column]) || inCastle(column, row)) continue
       if (kingdomMap.trees.some(tree => tree.column === column && tree.row === row)) continue
+      if (kingdomMap.stones.some(stone => stone.column === column && stone.row === row)) continue
       assert(visited.has(`${column},${row}`), `Odcięte dostępne pole: ${column},${row}`)
     }
   }

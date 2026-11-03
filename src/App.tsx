@@ -8,8 +8,8 @@ import MissionPanel from './components/MissionPanel'
 import { createMission, updateMission } from './game/mission'
 import { bindControlModes } from './game/controlModes'
 import type { ControlState } from './game/controlModes'
-import { WOOD_CAPACITY } from './game/resources'
-import type { WoodStatus } from './game/resources'
+import { createResources, getResourceStatus } from './game/resources'
+import type { ResourceStatus } from './game/resources'
 
 export default function App() {
   const appRef = useRef<HTMLElement>(null)
@@ -25,13 +25,13 @@ export default function App() {
   useEffect(() => () => python.dispose(), [python])
   const [commands, setCommands] = useState<WorkerCommands | null>(null)
   const [isRunning, setIsRunning] = useState(false)
-  const [wood, setWood] = useState<WoodStatus>({ inventory: { wood: 0, capacity: WOOD_CAPACITY }, kingdomWood: 0 })
+  const [resources, setResources] = useState<ResourceStatus>(() => getResourceStatus(createResources([])))
   const [mission, setMission] = useState(createMission)
 
   // Stabilna funkcja nie powoduje ponownego tworzenia sceny przy aktualizacji misji.
-  const handleWoodChanged = useCallback((status: WoodStatus) => {
-    setWood(status)
-    setMission(current => updateMission(current, status.kingdomWood))
+  const handleResourcesChanged = useCallback((status: ResourceStatus) => {
+    setResources(status)
+    setMission(current => updateMission(current, status.kingdom.wood))
   }, [])
 
   async function runProgram(input: string | readonly WorkerCommand[]): Promise<boolean> {
@@ -51,6 +51,8 @@ export default function App() {
         treeAhead: () => commands.treeAhead(),
         getSurroundings: () => commands.getSurroundings(),
         getInventory: () => commands.getInventory(),
+        stoneAhead: () => commands.stoneAhead(),
+        getSawmillInventory: () => commands.getSawmillInventory(),
       })
       return true
     } finally {
@@ -71,8 +73,8 @@ export default function App() {
             onCommandsReady={setCommands}
             onRunCommands={runProgram}
             canRunCommands={commands !== null && !isRunning}
-            wood={wood}
-            onWoodChanged={handleWoodChanged}
+            resources={resources}
+            onResourcesChanged={handleResourcesChanged}
             mapRef={mapRef}
             controls={controls}
           />

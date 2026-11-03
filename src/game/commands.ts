@@ -2,10 +2,26 @@ import type { Direction } from './movement'
 import type { TilePosition } from './map'
 import type { Surroundings } from './surroundings'
 import type { Inventory } from './resources'
+import type { SawmillInventory } from './productionData'
 
 type MoveCommand = 'move_up' | 'move_down' | 'move_left' | 'move_right'
 type TurnCommand = 'turn_up' | 'turn_down' | 'turn_left' | 'turn_right'
-export type WorkerCommand = MoveCommand | TurnCommand | 'chop_wood' | 'deposit_wood'
+export type WorkerCommand = MoveCommand | TurnCommand | 'chop_wood' | 'deposit_wood' | 'mine_stone' | 'deposit_stone' | 'build_sawmill'
+  | 'deposit_to_sawmill' | 'process_wood' | 'collect_planks' | 'deposit_planks'
+
+interface ProductionActions {
+  deposit: () => Promise<boolean>
+  process: () => Promise<boolean>
+  collect: () => Promise<boolean>
+  depositPlanks: () => Promise<boolean>
+  inventory: () => SawmillInventory
+}
+
+interface StoneActions {
+  mine: () => Promise<boolean>
+  deposit: () => Promise<boolean>
+  ahead: () => boolean
+}
 
 const commandDirections: Record<MoveCommand | TurnCommand, Direction> = {
   move_up: 'up',
@@ -34,6 +50,9 @@ export class WorkerCommands {
   private readonly readSurroundings?: () => Surroundings
   private readonly deposit: () => Promise<boolean>
   private readonly readInventory?: () => Inventory
+  private readonly stone?: StoneActions
+  private readonly buildSawmill: () => Promise<boolean>
+  private readonly production?: ProductionActions
 
   constructor(
     move: (direction: Direction) => Promise<boolean>,
@@ -45,6 +64,9 @@ export class WorkerCommands {
     readSurroundings?: () => Surroundings,
     deposit: () => Promise<boolean> = async () => false,
     readInventory?: () => Inventory,
+    stone?: StoneActions,
+    buildSawmill: () => Promise<boolean> = async () => false,
+    production?: ProductionActions,
   ) {
     this.move = move
     this.chop = chop
@@ -55,6 +77,9 @@ export class WorkerCommands {
     this.readSurroundings = readSurroundings
     this.deposit = deposit
     this.readInventory = readInventory
+    this.stone = stone
+    this.buildSawmill = buildSawmill
+    this.production = production
   }
 
   getWorkerPosition(): TilePosition {
@@ -95,10 +120,27 @@ export class WorkerCommands {
   private perform(command: WorkerCommand): Promise<boolean> {
     if (command === 'chop_wood') return this.chop()
     if (command === 'deposit_wood') return this.deposit()
+    if (command === 'mine_stone') return this.stone?.mine() ?? Promise.resolve(false)
+    if (command === 'deposit_stone') return this.stone?.deposit() ?? Promise.resolve(false)
+    if (command === 'build_sawmill') return this.buildSawmill()
+    if (command === 'deposit_to_sawmill') return this.production?.deposit() ?? Promise.resolve(false)
+    if (command === 'process_wood') return this.production?.process() ?? Promise.resolve(false)
+    if (command === 'collect_planks') return this.production?.collect() ?? Promise.resolve(false)
+    if (command === 'deposit_planks') return this.production?.depositPlanks() ?? Promise.resolve(false)
     if (command === 'turn_up' || command === 'turn_down' || command === 'turn_left' || command === 'turn_right') {
       return this.turn(commandDirections[command])
     }
     return this.move(commandDirections[command])
+  }
+
+  stoneAhead(): boolean {
+    if (this.disposed || !this.stone) throw new Error('Stan złóż kamienia jest niedostępny.')
+    return this.stone.ahead()
+  }
+
+  getSawmillInventory(): SawmillInventory {
+    if (this.disposed || !this.production) throw new Error('Magazyn tartaku jest niedostępny.')
+    return { ...this.production.inventory() }
   }
 
   async runCommands(commands: readonly WorkerCommand[]): Promise<boolean> {

@@ -1,9 +1,11 @@
 import type { kingdomMap, TilePosition } from './map'
 import { isTerrainWalkable } from './terrain.ts'
+import type { TileArea } from './areas'
+import { containsTile } from './areas.ts'
 
 export type Direction = 'up' | 'down' | 'left' | 'right'
-export type MovementMap = Pick<typeof kingdomMap, 'columns' | 'rows' | 'trees' | 'castle' | 'terrain'>
-export type TileType = 'empty' | 'tree' | 'water' | 'mountain' | 'castle' | 'boundary'
+export type MovementMap = Pick<typeof kingdomMap, 'columns' | 'rows' | 'trees' | 'castle' | 'terrain'> & { stones?: readonly TilePosition[]; buildings?: readonly TileArea[] }
+export type TileType = 'empty' | 'tree' | 'stone' | 'water' | 'mountain' | 'castle' | 'building' | 'boundary'
 
 const steps: Record<Direction, TilePosition> = {
   up: { column: 0, row: -1 },
@@ -44,14 +46,10 @@ export function getTileType(map: MovementMap, position: TilePosition): TileType 
   if (map.trees.some(tree => tree.column === column && tree.row === row)) {
     return 'tree'
   }
+  if (map.stones?.some(stone => stone.column === column && stone.row === row)) return 'stone'
 
-  const castle = map.castle
-  if (
-    column >= castle.column && column < castle.column + castle.columns &&
-    row >= castle.row && row < castle.row + castle.rows
-  ) {
-    return 'castle'
-  }
+  if (containsTile(map.castle, position)) return 'castle'
+  if (map.buildings?.some(building => containsTile(building, position))) return 'building'
 
   return 'empty'
 }

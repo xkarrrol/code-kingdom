@@ -35,25 +35,25 @@ test('ścinanie nie zwiększa postępu; częściowe dostawy kończą misję tylk
   let resources = createResources([{ column: 2, row: 1 }])
   let mission = createMission()
   resources = chopWood(resources, { column: 2, row: 2, facing: 'down' })
-  mission = updateMission(mission, resources.kingdomWood)
+  mission = updateMission(mission, resources.kingdom.wood)
   assert.deepEqual(mission, { progress: 0, completed: false })
   for (let i = 1; i <= 3; i++) {
     resources = chopWood(resources, { column: 2, row: 2, facing: 'up' })
-    mission = updateMission(mission, resources.kingdomWood)
+    mission = updateMission(mission, resources.kingdom.wood)
     assert.equal(mission.progress, i === 3 ? 2 : 0)
     assert.equal(mission.completed, false)
     if (i === 2) {
       resources = depositWood(resources, { column: 5, row: 3 }, kingdomMap.castle)
-      mission = updateMission(mission, resources.kingdomWood)
+      mission = updateMission(mission, resources.kingdom.wood)
       assert.deepEqual(mission, { progress: 2, completed: false })
     }
   }
   resources = depositWood(resources, { column: 5, row: 4 }, kingdomMap.castle)
-  mission = updateMission(mission, resources.kingdomWood)
+  mission = updateMission(mission, resources.kingdom.wood)
   assert.deepEqual(mission, { progress: 3, completed: true })
   const completed = mission
   resources = chopWood(resources, { column: 2, row: 2, facing: 'up' })
-  assert.equal(updateMission(mission, resources.kingdomWood), completed)
+  assert.equal(updateMission(mission, resources.kingdom.wood), completed)
 })
 
 test('utworzenie nowej sesji nie zachowuje ukończenia poprzedniej', () => {

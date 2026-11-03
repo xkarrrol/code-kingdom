@@ -9,6 +9,7 @@ export default function ObjectInfoPanel({ object }: { object: SelectableObject }
       <p>Typ: {typeLabels[object.kind]}</p>
       <p>Pole: X = {object.column}, Y = {object.row}</p>
       {object.wood !== undefined && <p>Drewno: {object.wood}</p>}
+      {object.stone !== undefined && <p>Kamień: {object.stone}</p>}
       <small>Esc: zamknij informacje</small>
     </section>
   )

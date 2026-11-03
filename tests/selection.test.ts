@@ -87,7 +87,7 @@ test('pusta lista i nieaktualny identyfikator nie powodują błędu', () => {
 
 test('kamera płynnie zbliża się do środka zaznaczonego obiektu, zachowując zoom', () => {
   const area = { worldWidth: 1920, worldHeight: 1280, viewWidth: 512, viewHeight: 512 }
-  const list = getSelectableObjects(kingdomMap.worker, kingdomMap.castle, [{ column: 20, row: 10, wood: 3 }])
+  const list = getSelectableObjects(kingdomMap.worker, kingdomMap.castle, [{ column: 20, row: 10, amount: 3 }])
   const state = applySelectionAction(list, initial, 'select-previous')
   const selected = getSelectedObject(list, state)!
   const target = { x: (selected.column + selected.columns / 2) * 64, y: (selected.row + selected.rows / 2) * 64 }

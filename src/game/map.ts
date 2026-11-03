@@ -21,4 +21,10 @@ export const kingdomMap = {
     { column: 6, row: 6 },
   ] satisfies TilePosition[],
   worker: { column: 5, row: 4 } satisfies TilePosition,
+  stones: [
+    { column: 8, row: 3 },
+    { column: 12, row: 8 },
+    { column: 17, row: 11 },
+    { column: 25, row: 12 },
+  ] satisfies TilePosition[],
 }

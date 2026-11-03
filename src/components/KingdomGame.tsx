@@ -7,7 +7,8 @@ import { bindCameraControls } from '../game/cameraControls'
 import { exampleCommands } from '../game/commands'
 import type { WorkerCommands, WorkerCommand } from '../game/commands'
 import type { WorkerStatus } from '../game/workerState'
-import type { WoodStatus } from '../game/resources'
+import type { ResourceStatus } from '../game/resources'
+import { SAWMILL_CAPACITY } from '../game/productionData'
 import type { TilePosition } from '../game/map'
 import type { ControlState } from '../game/controlModes'
 import type { SelectionAction, SelectionView } from '../game/selection'
@@ -20,13 +21,13 @@ interface KingdomGameProps {
   onCommandsReady: (commands: WorkerCommands | null) => void
   onRunCommands: (commands: readonly WorkerCommand[]) => Promise<boolean>
   canRunCommands: boolean
-  wood: WoodStatus
-  onWoodChanged: (wood: WoodStatus) => void
+  resources: ResourceStatus
+  onResourcesChanged: (resources: ResourceStatus) => void
   mapRef: RefObject<HTMLDivElement | null>
   controls: ControlState
 }
 
-export default function KingdomGame({ onCommandsReady, onRunCommands, canRunCommands, wood, onWoodChanged, mapRef, controls }: KingdomGameProps) {
+export default function KingdomGame({ onCommandsReady, onRunCommands, canRunCommands, resources, onResourcesChanged, mapRef, controls }: KingdomGameProps) {
   const containerRef = mapRef
   const sceneRef = useRef<KingdomScene | null>(null)
   const [workerStatus, setWorkerStatus] = useState<WorkerStatus>({ facing: 'down', message: '' })
@@ -57,7 +58,7 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
     })
     // StrictMode sprawdza efekt dwa razy. Timer pozwala anulować pierwszy start.
     const startTimer = window.setTimeout(() => {
-      const scene = new KingdomScene(onCommandsReady, onWoodChanged, setWorkerStatus, setHoveredTile, setSelectionView)
+      const scene = new KingdomScene(onCommandsReady, onResourcesChanged, setWorkerStatus, setHoveredTile, setSelectionView)
       scene.setExploreView(controlsRef.current.mode === 'EXPLORE')
       sceneRef.current = scene
       game = new Phaser.Game({
@@ -82,11 +83,13 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
       onCommandsReady(null)
       game?.destroy(true)
     }
-  }, [onCommandsReady, onWoodChanged, containerRef])
+  }, [onCommandsReady, onResourcesChanged, containerRef])
 
   return (
     <>
-      <p aria-live="polite">Drewno robotnika: {wood.inventory.wood}/{wood.inventory.capacity} · Drewno królestwa: {wood.kingdomWood}</p>
+      <p aria-live="polite">Ekwipunek: drewno {resources.inventory.wood}, kamień {resources.inventory.stone}, deski {resources.inventory.planks} · Zajęte {resources.inventory.wood + resources.inventory.stone + resources.inventory.planks}/{resources.inventory.capacity}</p>
+      <p aria-live="polite">Zasoby królestwa: drewno {resources.kingdom.wood}, kamień {resources.kingdom.stone}, deski {resources.kingdom.planks}</p>
+      {resources.sawmill && <p aria-live="polite">Magazyn tartaku: drewno {resources.sawmill.wood}/{SAWMILL_CAPACITY.wood}, deski {resources.sawmill.planks}/{SAWMILL_CAPACITY.planks}</p>}
       <p>Kierunek patrzenia: {facingLabels[workerStatus.facing]}</p>
       <p role="status">{workerStatus.message}</p>
       {controls.mode === 'EXPLORE' && <p>Pole (kolumna, wiersz): {hoveredTile ? `${hoveredTile.column}, ${hoveredTile.row}` : '—'}</p>}
@@ -104,7 +107,7 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
           role="group"
           tabIndex={0}
           aria-describedby="map-controls"
-          aria-label="Świat królestwa: 30 na 20 pól trawy, lasu, wody, skał i ścieżek; zamek, drzewa i robotnik."
+          aria-label="Świat królestwa: 30 na 20 pól trawy, lasu, wody, skał i ścieżek; zamek, drzewa, złoża kamienia i robotnik."
         />
       </div>
     </>

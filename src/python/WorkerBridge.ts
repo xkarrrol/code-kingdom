@@ -3,7 +3,8 @@ import type { Direction } from '../game/movement'
 import type { PythonMessage, BridgeResponse, WorkerPosition, WorldQuery, WorldValue } from './messages'
 import type { Surroundings } from '../game/surroundings'
 import type { Inventory } from '../game/resources'
-import { isInventory, isSurroundings, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES } from './messages.ts'
+import type { SawmillInventory } from '../game/productionData'
+import { isInventory, isSawmillInventory, isSurroundings, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES } from './messages.ts'
 
 export function supportsJSPI(api: unknown): boolean {
   return !!api && typeof api === 'object'
@@ -18,7 +19,7 @@ export class WorkerBridge {
   private closed = false
   private limitError?: Error
   private pending = new Map<number, {
-    resultType: 'position' | 'surroundings' | 'inventory' | 'boolean'
+    resultType: 'position' | 'surroundings' | 'inventory' | 'sawmill' | 'boolean'
     resolve: (value: WorldValue) => void
     reject: (error: Error) => void
   }>()
@@ -42,12 +43,20 @@ export class WorkerBridge {
     return await this.query({ operation: 'tree_ahead' }) as boolean
   }
 
+  async stoneAhead(): Promise<boolean> {
+    return await this.query({ operation: 'stone_ahead' }) as boolean
+  }
+
   async getSurroundings(): Promise<Surroundings> {
     return await this.query({ operation: 'get_surroundings' }) as Surroundings
   }
 
   async getInventory(): Promise<Inventory> {
     return await this.query({ operation: 'get_inventory' }) as Inventory
+  }
+
+  async getSawmillInventory(): Promise<SawmillInventory> {
+    return await this.query({ operation: 'get_sawmill_inventory' }) as SawmillInventory
   }
 
   private query(query: WorldQuery): Promise<WorldValue> {
@@ -72,7 +81,8 @@ export class WorkerBridge {
     return new Promise((resolve, reject) => {
       const resultType = query?.operation === 'get_worker_position' ? 'position'
         : query?.operation === 'get_surroundings' ? 'surroundings'
-        : query?.operation === 'get_inventory' ? 'inventory' : 'boolean'
+        : query?.operation === 'get_inventory' ? 'inventory'
+        : query?.operation === 'get_sawmill_inventory' ? 'sawmill' : 'boolean'
       this.pending.set(requestId, { resultType, resolve, reject })
       try {
         this.send(kind === 'query'
@@ -93,7 +103,8 @@ export class WorkerBridge {
     if (!message.ok) request.reject(new Error(message.error))
     else if (request.resultType === 'position' ? !isWorkerPosition(message.value)
       : request.resultType === 'surroundings' ? !isSurroundings(message.value)
-      : request.resultType === 'inventory' ? !isInventory(message.value) : typeof message.value !== 'boolean') {
+      : request.resultType === 'inventory' ? !isInventory(message.value)
+      : request.resultType === 'sawmill' ? !isSawmillInventory(message.value) : typeof message.value !== 'boolean') {
       request.reject(new Error('Nieprawidłowa odpowiedź silnika gry.'))
     } else request.resolve(message.value)
   }

@@ -27,6 +27,10 @@ export async function executePython(
       requireJSPI()
       return bridge.treeAhead()
     },
+    __stone_ahead: () => {
+      requireJSPI()
+      return bridge.stoneAhead()
+    },
     __get_surroundings: () => {
       requireJSPI()
       return bridge.getSurroundings()
@@ -34,6 +38,10 @@ export async function executePython(
     __get_inventory: () => {
       requireJSPI()
       return bridge.getInventory()
+    },
+    __get_sawmill_inventory: () => {
+      requireJSPI()
+      return bridge.getSawmillInventory()
     },
   })
 
@@ -51,6 +59,13 @@ move_left = _make_command(__execute_command, "move_left")
 move_right = _make_command(__execute_command, "move_right")
 chop_wood = _make_command(__execute_command, "chop_wood")
 deposit_wood = _make_command(__execute_command, "deposit_wood")
+mine_stone = _make_command(__execute_command, "mine_stone")
+deposit_stone = _make_command(__execute_command, "deposit_stone")
+build_sawmill = _make_command(__execute_command, "build_sawmill")
+deposit_to_sawmill = _make_command(__execute_command, "deposit_to_sawmill")
+process_wood = _make_command(__execute_command, "process_wood")
+collect_planks = _make_command(__execute_command, "collect_planks")
+deposit_planks = _make_command(__execute_command, "deposit_planks")
 turn_up = _make_command(__execute_command, "turn_up")
 turn_down = _make_command(__execute_command, "turn_down")
 turn_left = _make_command(__execute_command, "turn_left")
@@ -86,7 +101,8 @@ def _make_tree_ahead(query):
     return tree_ahead
 
 tree_ahead = _make_tree_ahead(__tree_ahead)
-del _make_tree_ahead, __tree_ahead
+stone_ahead = _make_tree_ahead(__stone_ahead)
+del _make_tree_ahead, __tree_ahead, __stone_ahead
 
 def _make_surroundings_query(query):
     from pyodide.ffi import run_sync
@@ -103,11 +119,22 @@ def _make_inventory_query(query):
     from pyodide.ffi import run_sync
     def get_inventory():
         inventory = run_sync(query())
-        return {"wood": int(inventory.wood), "capacity": int(inventory.capacity)}
+        return {"wood": int(inventory.wood), "stone": int(inventory.stone),
+                "planks": int(inventory.planks), "capacity": int(inventory.capacity)}
     return get_inventory
 
 get_inventory = _make_inventory_query(__get_inventory)
 del _make_inventory_query, __get_inventory
+
+def _make_sawmill_query(query):
+    from pyodide.ffi import run_sync
+    def get_sawmill_inventory():
+        inventory = run_sync(query())
+        return {"wood": int(inventory.wood), "planks": int(inventory.planks)}
+    return get_sawmill_inventory
+
+get_sawmill_inventory = _make_sawmill_query(__get_sawmill_inventory)
+del _make_sawmill_query, __get_sawmill_inventory
 `, { globals })
 
     const result = await pyodide.runPythonAsync(code, { globals, filename: 'player.py' })
