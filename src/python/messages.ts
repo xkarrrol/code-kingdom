@@ -10,7 +10,9 @@ export type PythonMessage =
   | { type: 'error'; message: string }
 
 export function isWorkerCommand(value: unknown): value is WorkerCommand {
-  return value === 'move_up' || value === 'move_down' || value === 'move_left' || value === 'move_right' || value === 'chop_wood'
+  return value === 'move_up' || value === 'move_down' || value === 'move_left' || value === 'move_right'
+    || value === 'turn_up' || value === 'turn_down' || value === 'turn_left' || value === 'turn_right'
+    || value === 'chop_wood'
 }
 
 export function isCommandList(value: unknown): value is WorkerCommand[] {

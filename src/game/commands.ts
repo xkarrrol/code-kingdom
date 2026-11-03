@@ -1,13 +1,18 @@
 import type { Direction } from './movement'
 
 type MoveCommand = 'move_up' | 'move_down' | 'move_left' | 'move_right'
-export type WorkerCommand = MoveCommand | 'chop_wood'
+type TurnCommand = 'turn_up' | 'turn_down' | 'turn_left' | 'turn_right'
+export type WorkerCommand = MoveCommand | TurnCommand | 'chop_wood'
 
-const commandDirections: Record<MoveCommand, Direction> = {
+const commandDirections: Record<MoveCommand | TurnCommand, Direction> = {
   move_up: 'up',
   move_down: 'down',
   move_left: 'left',
   move_right: 'right',
+  turn_up: 'up',
+  turn_down: 'down',
+  turn_left: 'left',
+  turn_right: 'right',
 }
 
 export const exampleCommands: readonly WorkerCommand[] = ['move_up', 'move_right', 'move_left']
@@ -19,10 +24,16 @@ export class WorkerCommands {
   private disposed = false
   private readonly move: (direction: Direction) => Promise<boolean>
   private readonly chop: () => Promise<boolean>
+  private readonly turn: (direction: Direction) => Promise<boolean>
 
-  constructor(move: (direction: Direction) => Promise<boolean>, chop: () => Promise<boolean> = async () => false) {
+  constructor(
+    move: (direction: Direction) => Promise<boolean>,
+    chop: () => Promise<boolean> = async () => false,
+    turn: (direction: Direction) => Promise<boolean> = async () => false,
+  ) {
     this.move = move
     this.chop = chop
+    this.turn = turn
   }
 
   get isRunning() {
@@ -35,7 +46,11 @@ export class WorkerCommands {
   }
 
   private perform(command: WorkerCommand): Promise<boolean> {
-    return command === 'chop_wood' ? this.chop() : this.move(commandDirections[command])
+    if (command === 'chop_wood') return this.chop()
+    if (command === 'turn_up' || command === 'turn_down' || command === 'turn_left' || command === 'turn_right') {
+      return this.turn(commandDirections[command])
+    }
+    return this.move(commandDirections[command])
   }
 
   async runCommands(commands: readonly WorkerCommand[]): Promise<boolean> {

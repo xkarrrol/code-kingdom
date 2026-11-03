@@ -17,12 +17,22 @@ test('każdy kierunek przesuwa dokładnie o jedno pole', () => {
 })
 
 test('wszystkie krawędzie planszy blokują wyjście', () => {
-  for (let coordinate = 0; coordinate < 8; coordinate++) {
+  for (let coordinate = 0; coordinate < kingdomMap.rows; coordinate++) {
     assert.equal(getWorkerDestination(kingdomMap, { column: 0, row: coordinate }, 'left'), null)
-    assert.equal(getWorkerDestination(kingdomMap, { column: 7, row: coordinate }, 'right'), null)
-    assert.equal(getWorkerDestination(kingdomMap, { column: coordinate, row: 0 }, 'up'), null)
-    assert.equal(getWorkerDestination(kingdomMap, { column: coordinate, row: 7 }, 'down'), null)
+    assert.equal(getWorkerDestination(kingdomMap, { column: kingdomMap.columns - 1, row: coordinate }, 'right'), null)
   }
+  for (let coordinate = 0; coordinate < kingdomMap.columns; coordinate++) {
+    assert.equal(getWorkerDestination(kingdomMap, { column: coordinate, row: 0 }, 'up'), null)
+    assert.equal(getWorkerDestination(kingdomMap, { column: coordinate, row: kingdomMap.rows - 1 }, 'down'), null)
+  }
+})
+
+test('świat ma 30 na 20 pól po 64 px i robotnik może wejść poza dawny obszar 8 na 8', () => {
+  assert.equal(kingdomMap.columns, 30)
+  assert.equal(kingdomMap.rows, 20)
+  assert.equal(kingdomMap.tileSize, 64)
+  assert.deepEqual(getWorkerDestination(kingdomMap, { column: 7, row: 10 }, 'right'), { column: 8, row: 10 })
+  assert.deepEqual(getWorkerDestination(kingdomMap, { column: 10, row: 7 }, 'down'), { column: 10, row: 8 })
 })
 
 test('każde drzewo i wszystkie cztery pola zamku blokują wejście z każdej strony', () => {

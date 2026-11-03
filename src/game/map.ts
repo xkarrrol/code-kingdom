@@ -5,8 +5,8 @@ export interface TilePosition {
 
 // Dane mapy nie zależą od Reacta ani Phasera.
 export const kingdomMap = {
-  columns: 8,
-  rows: 8,
+  columns: 30,
+  rows: 20,
   tileSize: 64,
   castle: { column: 3, row: 3, columns: 2, rows: 2 },
   trees: [

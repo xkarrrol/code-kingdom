@@ -28,6 +28,10 @@ move_down = _make_move(__record_command, "move_down")
 move_left = _make_move(__record_command, "move_left")
 move_right = _make_move(__record_command, "move_right")
 chop_wood = _make_move(__record_command, "chop_wood")
+turn_up = _make_move(__record_command, "turn_up")
+turn_down = _make_move(__record_command, "turn_down")
+turn_left = _make_move(__record_command, "turn_left")
+turn_right = _make_move(__record_command, "turn_right")
 del _make_move, __record_command
 `, { globals })
 

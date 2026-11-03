@@ -6,6 +6,10 @@ import type { Direction } from './movement'
 import { WorkerCommands } from './commands'
 import type { WorkerCommand } from './commands'
 import { chopWood, createResources } from './resources'
+import { completeWorkerMove, createWorkerState, turnWorker } from './workerState'
+import type { WorkerStatus } from './workerState'
+import { createCameraState, followWorker, gameViewport, getCameraScroll, getHoveredTile, panCamera, updateCamera, zoomCamera } from './camera'
+import type { CameraState } from './camera'
 
 const arrowCommands: Record<string, WorkerCommand | undefined> = {
   ArrowUp: 'move_up',
@@ -15,7 +19,7 @@ const arrowCommands: Record<string, WorkerCommand | undefined> = {
 }
 
 export class KingdomScene extends Phaser.Scene {
-  private workerPosition: TilePosition = { ...kingdomMap.worker }
+  private workerState = createWorkerState(kingdomMap.worker)
   private workerGraphics?: Phaser.GameObjects.Graphics
   private isMoving = false
   private pendingMove?: Promise<boolean>
@@ -23,13 +27,28 @@ export class KingdomScene extends Phaser.Scene {
   commands?: WorkerCommands
   private readonly onCommandsReady?: (commands: WorkerCommands) => void
   private readonly onWoodChanged?: (wood: number) => void
+  private readonly onStatusChanged?: (status: WorkerStatus) => void
   private resources = createResources(kingdomMap.trees)
   private treeGraphics = new Map<string, Phaser.GameObjects.Graphics>()
+  private cameraState?: CameraState
+  private exploreMode = false
+  private gridVisible = false
+  private gridGraphics?: Phaser.GameObjects.Graphics
+  private pointerPosition?: { x: number; y: number }
+  private lastHoveredTile: TilePosition | null = null
+  private readonly onHoverChanged?: (tile: TilePosition | null) => void
 
-  constructor(onCommandsReady?: (commands: WorkerCommands) => void, onWoodChanged?: (wood: number) => void) {
+  constructor(
+    onCommandsReady?: (commands: WorkerCommands) => void,
+    onWoodChanged?: (wood: number) => void,
+    onStatusChanged?: (status: WorkerStatus) => void,
+    onHoverChanged?: (tile: TilePosition | null) => void,
+  ) {
     super('KingdomScene')
     this.onCommandsReady = onCommandsReady
     this.onWoodChanged = onWoodChanged
+    this.onStatusChanged = onStatusChanged
+    this.onHoverChanged = onHoverChanged
   }
 
   create() {
@@ -39,14 +58,17 @@ export class KingdomScene extends Phaser.Scene {
     this.treeGraphics.clear()
     this.onWoodChanged?.(this.resources.collectedWood)
 
-    for (let row = 0; row < rows; row++) {
-      for (let column = 0; column < columns; column++) {
-        graphics.fillStyle((column + row) % 2 === 0 ? 0x79ad57 : 0x71a34f)
-        graphics.fillRect(column * tileSize, row * tileSize, tileSize, tileSize)
-        graphics.lineStyle(1, 0x547e3a)
-        graphics.strokeRect(column * tileSize, row * tileSize, tileSize, tileSize)
-      }
+    graphics.fillStyle(0x79ad57)
+    graphics.fillRect(0, 0, columns * tileSize, rows * tileSize)
+    this.gridGraphics = this.add.graphics().setDepth(1)
+    this.gridGraphics.lineStyle(1, 0xffffff, 0.18)
+    for (let column = 0; column <= columns; column++) {
+      this.gridGraphics.lineBetween(column * tileSize, 0, column * tileSize, rows * tileSize)
     }
+    for (let row = 0; row <= rows; row++) {
+      this.gridGraphics.lineBetween(0, row * tileSize, columns * tileSize, row * tileSize)
+    }
+    this.gridGraphics.setVisible(this.exploreMode && this.gridVisible)
 
     for (const tree of this.resources.trees) {
       const treeGraphic = this.add.graphics()
@@ -75,19 +97,30 @@ export class KingdomScene extends Phaser.Scene {
     graphics.fillRect(x - 23, y - 13, 12, 15)
     graphics.fillRect(x + 11, y - 13, 12, 15)
 
-    this.workerPosition = { ...worker }
+    this.workerState = createWorkerState(worker)
+    this.reportStatus('')
     this.isMoving = false
     this.workerGraphics = this.add.graphics()
     this.drawWorker(this.workerGraphics)
     const center = this.tileCenter(worker)
     this.workerGraphics.setPosition(center.x, center.y)
-    this.commands = new WorkerCommands(direction => this.moveWorker(direction), () => this.chopWorkerWood())
+    this.cameraState = createCameraState(center, this.cameraArea())
+    this.cameras.main.setBounds(0, 0, columns * tileSize, rows * tileSize)
+    this.applyCamera()
+    this.commands = new WorkerCommands(
+      direction => this.moveWorker(direction),
+      () => this.chopWorkerWood(),
+      direction => this.turnWorkerFacing(direction),
+    )
     this.onCommandsReady?.(this.commands)
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       this.commands?.dispose()
       this.commands = undefined
       this.workerGraphics = undefined
+      this.cameraState = undefined
+      this.gridGraphics = undefined
+      this.pointerPosition = undefined
       // Zwolnij oczekującą sekwencję również przy zamknięciu sceny.
       this.finishMove?.(false)
     })
@@ -96,6 +129,8 @@ export class KingdomScene extends Phaser.Scene {
     if (keyboard) {
       keyboard.addCapture('UP,DOWN,LEFT,RIGHT')
       const onKeyDown = (event: KeyboardEvent) => {
+        if (!this.exploreMode) return
+        if (event.altKey || event.ctrlKey || event.metaKey) return
         // Przytrzymanie klawisza nie powoduje kolejnych kroków.
         if (event.repeat || event.altKey || event.ctrlKey || event.metaKey) return
         const command = arrowCommands[event.key]
@@ -109,12 +144,72 @@ export class KingdomScene extends Phaser.Scene {
     }
   }
 
+  setExploreView(explore: boolean, gridVisible: boolean) {
+    this.exploreMode = explore
+    this.gridVisible = gridVisible
+    this.gridGraphics?.setVisible(explore && gridVisible)
+    this.updateHoveredTile()
+  }
+
+  hoverView(x?: number, y?: number) {
+    this.pointerPosition = x !== undefined && y !== undefined ? { x, y } : undefined
+    this.updateHoveredTile()
+  }
+
+  private updateHoveredTile() {
+    const tile = this.exploreMode && this.cameraState && this.pointerPosition
+      ? getHoveredTile(this.cameraState, this.pointerPosition, this.cameraArea(), kingdomMap.tileSize) : null
+    if (tile?.column === this.lastHoveredTile?.column && tile?.row === this.lastHoveredTile?.row) return
+    this.lastHoveredTile = tile
+    this.onHoverChanged?.(tile)
+  }
+
+  panView(x: number, y: number) {
+    if (!this.cameraState) return
+    this.cameraState = panCamera(this.cameraState, { x, y }, this.cameraArea())
+    this.applyCamera()
+  }
+
+  zoomView(delta: number, x: number, y: number) {
+    if (!this.cameraState) return
+    this.cameraState = zoomCamera(this.cameraState, { x, y }, delta, this.cameraArea())
+    this.applyCamera()
+  }
+
+  followWorkerView() {
+    if (!this.cameraState || !this.workerGraphics) return
+    this.cameraState = followWorker(this.cameraState, this.workerGraphics, this.cameraArea())
+    this.applyCamera()
+  }
+
+  private applyCamera() {
+    if (!this.cameraState) return
+    const scroll = getCameraScroll(this.cameraState, this.cameraArea())
+    this.cameras.main.setZoom(this.cameraState.zoom).setScroll(scroll.x, scroll.y)
+    this.updateHoveredTile()
+  }
+
+  private cameraArea() {
+    return {
+      worldWidth: kingdomMap.columns * kingdomMap.tileSize,
+      worldHeight: kingdomMap.rows * kingdomMap.tileSize,
+      viewWidth: gameViewport.width,
+      viewHeight: gameViewport.height,
+    }
+  }
+
+  update(_time: number, delta: number) {
+    if (!this.workerGraphics || !this.cameraState) return
+    this.cameraState = updateCamera(this.cameraState, this.workerGraphics, this.cameraArea(), delta)
+    this.applyCamera()
+  }
+
   private async moveWorker(direction: Direction): Promise<boolean> {
     // Przycisk może zostać kliknięty w trakcie kroku rozpoczętego strzałką.
     if (this.pendingMove) await this.pendingMove
     if (!this.workerGraphics) return false
 
-    const destination = getWorkerDestination({ ...kingdomMap, trees: this.resources.trees }, this.workerPosition, direction)
+    const destination = getWorkerDestination({ ...kingdomMap, trees: this.resources.trees }, this.workerState, direction)
     if (!destination) return false
 
     this.isMoving = true
@@ -135,19 +230,31 @@ export class KingdomScene extends Phaser.Scene {
       duration: 180,
       ease: 'Sine.easeInOut',
       onComplete: () => {
-        this.workerPosition = destination
+        this.workerState = completeWorkerMove(this.workerState, destination, direction)
+        this.reportStatus('')
         this.finishMove?.(true)
       },
     })
     return movement
   }
 
+  private async turnWorkerFacing(direction: Direction): Promise<boolean> {
+    if (this.pendingMove) await this.pendingMove
+    if (!this.workerGraphics) return false
+    this.workerState = turnWorker(this.workerState, direction)
+    this.reportStatus('')
+    return true
+  }
+
   private async chopWorkerWood(): Promise<boolean> {
     // Także pierwsze ścinanie czeka na ewentualny krok rozpoczęty strzałką.
     if (this.pendingMove) await this.pendingMove
     if (!this.workerGraphics) return false
-    const next = chopWood(this.resources, this.workerPosition)
-    if (next === this.resources) return false
+    const next = chopWood(this.resources, this.workerState)
+    if (next === this.resources) {
+      this.reportStatus('Przed robotnikiem nie ma drzewa. Podejdź do drzewa z odpowiedniej strony.')
+      return false
+    }
 
     for (const tree of this.resources.trees) {
       if (!next.trees.some(remaining => remaining.column === tree.column && remaining.row === tree.row)) {
@@ -158,7 +265,12 @@ export class KingdomScene extends Phaser.Scene {
     }
     this.resources = next
     this.onWoodChanged?.(next.collectedWood)
+    this.reportStatus('Zebrano 1 drewno.')
     return true
+  }
+
+  private reportStatus(message: string) {
+    this.onStatusChanged?.({ facing: this.workerState.facing, message })
   }
 
   private tileCenter(position: TilePosition) {

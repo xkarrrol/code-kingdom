@@ -1,4 +1,6 @@
 import type { TilePosition } from './map'
+import type { WorkerState } from './workerState'
+import { getFacingTile } from './workerState.ts'
 
 export interface TreeResource extends TilePosition {
   wood: number
@@ -14,18 +16,9 @@ export function createResources(trees: readonly TilePosition[]): ResourceState {
 }
 
 // Czysta logika zasobów: żadnych zależności od Reacta, Phasera ani Pythona.
-export function chopWood(state: ResourceState, worker: TilePosition): ResourceState {
-  const neighbours = [
-    { column: worker.column, row: worker.row - 1 },
-    { column: worker.column, row: worker.row + 1 },
-    { column: worker.column - 1, row: worker.row },
-    { column: worker.column + 1, row: worker.row },
-  ]
-  let target: TreeResource | undefined
-  for (const neighbour of neighbours) {
-    target = state.trees.find(tree => tree.wood > 0 && tree.column === neighbour.column && tree.row === neighbour.row)
-    if (target) break
-  }
+export function chopWood(state: ResourceState, worker: WorkerState): ResourceState {
+  const front = getFacingTile(worker)
+  const target = state.trees.find(tree => tree.wood > 0 && tree.column === front.column && tree.row === front.row)
   if (!target) return state
 
   return {

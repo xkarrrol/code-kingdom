@@ -1,15 +1,35 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import KingdomGame from './components/KingdomGame'
 import CodeEditor from './components/CodeEditor'
 import type { WorkerCommands, WorkerCommand } from './game/commands'
 import { PythonRunner } from './python/PythonRunner'
+import MissionPanel from './components/MissionPanel'
+import { createMission, updateMission } from './game/mission'
+import { bindControlModes } from './game/controlModes'
+import type { ControlState } from './game/controlModes'
 
 export default function App() {
+  const appRef = useRef<HTMLElement>(null)
+  const editorRef = useRef<HTMLTextAreaElement>(null)
+  const mapRef = useRef<HTMLDivElement>(null)
+  const [controls, setControls] = useState<ControlState>({ mode: 'CODE', gridVisible: false })
+  useEffect(() => {
+    if (!appRef.current || !editorRef.current || !mapRef.current) return
+    return bindControlModes(appRef.current, editorRef.current, mapRef.current, setControls)
+  }, [])
   const [python] = useState(() => new PythonRunner())
   const runLock = useRef(false)
   useEffect(() => () => python.dispose(), [python])
   const [commands, setCommands] = useState<WorkerCommands | null>(null)
   const [isRunning, setIsRunning] = useState(false)
+  const [wood, setWood] = useState(0)
+  const [mission, setMission] = useState(createMission)
+
+  // Stabilna funkcja nie powoduje ponownego tworzenia sceny przy aktualizacji misji.
+  const handleWoodChanged = useCallback((collectedWood: number) => {
+    setWood(collectedWood)
+    setMission(current => updateMission(current, collectedWood))
+  }, [])
 
   async function runProgram(input: string | readonly WorkerCommand[]): Promise<boolean> {
     if (runLock.current || !commands || commands.isRunning) return false
@@ -27,18 +47,26 @@ export default function App() {
   }
 
   return (
-    <main>
+    <main ref={appRef}>
       <h1>Code Kingdom</h1>
       <p>Build your kingdom. Learn Python. Conquer the world.</p>
+      <p className="mode-indicator" role="status">Tryb: <strong>{controls.mode}</strong> · Esc: mapa · I: edytor</p>
       <div className="game-layout">
         <section className="game-panel" aria-label="Mapa królestwa">
           <KingdomGame
             onCommandsReady={setCommands}
             onRunCommands={runProgram}
             canRunCommands={commands !== null && !isRunning}
+            wood={wood}
+            onWoodChanged={handleWoodChanged}
+            mapRef={mapRef}
+            controls={controls}
           />
         </section>
-        <CodeEditor onRunCode={runProgram} disabled={commands === null || isRunning} />
+        <div className="editor-column">
+          <MissionPanel mission={mission} />
+          <CodeEditor editorRef={editorRef} onRunCode={runProgram} disabled={commands === null || isRunning} />
+        </div>
       </div>
     </main>
   )

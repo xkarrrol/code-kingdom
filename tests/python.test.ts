@@ -8,6 +8,7 @@ import { WorkerCommands } from '../src/game/commands.ts'
 import { chopWood, createResources } from '../src/game/resources.ts'
 import { kingdomMap } from '../src/game/map.ts'
 import { getWorkerDestination } from '../src/game/movement.ts'
+import { completeWorkerMove, createWorkerState, turnWorker } from '../src/game/workerState.ts'
 
 function createRealWorker(): PythonWorker {
   const worker = new Worker(new URL('./helpers/python-worker.mjs', import.meta.url))
@@ -25,20 +26,20 @@ function createRealWorker(): PythonWorker {
 test('Python zapisuje ruch i ścinanie; gra zbiera drewno i pozwala wejść na wycięte pole', async () => {
   const runner = new PythonRunner(createRealWorker)
   let state = createResources(kingdomMap.trees)
-  let position = { ...kingdomMap.worker }
+  let position = createWorkerState(kingdomMap.worker)
   const commands = await runner.run(`
-move_up()
 move_right()
+move_up()
 for i in range(3):
     chop_wood()
 move_up()
 `)
-  assert.deepEqual(commands, ['move_up', 'move_right', 'chop_wood', 'chop_wood', 'chop_wood', 'move_up'])
+  assert.deepEqual(commands, ['move_right', 'move_up', 'chop_wood', 'chop_wood', 'chop_wood', 'move_up'])
   assert.equal(state.collectedWood, 0)
   const game = new WorkerCommands(async direction => {
     const next = getWorkerDestination({ ...kingdomMap, trees: state.trees }, position, direction)
     if (!next) return false
-    position = next
+    position = completeWorkerMove(position, next, direction)
     return true
   }, async () => {
     const next = chopWood(state, position)
@@ -48,7 +49,7 @@ move_up()
   })
   await game.runCommands(commands)
   assert.equal(state.collectedWood, 3)
-  assert.deepEqual(position, { column: 6, row: 2 })
+  assert.deepEqual(position, { column: 6, row: 2, facing: 'up' })
   assert.equal(state.trees.length, kingdomMap.trees.length - 1)
 
   await assert.rejects(async () => {
@@ -58,6 +59,46 @@ move_up()
   assert.equal(state.collectedWood, 3)
   await assert.rejects(runner.run('for i in range(101):\n    chop_wood()'), /limit 100/)
   assert.equal(state.collectedWood, 3)
+})
+
+test('Python obsługuje wszystkie obroty oraz ścinanie po obrocie bez przemieszczania', async () => {
+  const runner = new PythonRunner(createRealWorker)
+  const commands = await runner.run(`
+move_up()
+move_up()
+turn_right()
+for i in range(3):
+    chop_wood()
+turn_up()
+chop_wood()
+turn_left()
+turn_down()
+`)
+  assert.deepEqual(commands, [
+    'move_up', 'move_up', 'turn_right', 'chop_wood', 'chop_wood', 'chop_wood',
+    'turn_up', 'chop_wood', 'turn_left', 'turn_down',
+  ])
+  let worker = createWorkerState(kingdomMap.worker)
+  let resources = createResources(kingdomMap.trees)
+  const game = new WorkerCommands(async direction => {
+    const destination = getWorkerDestination({ ...kingdomMap, trees: resources.trees }, worker, direction)
+    worker = completeWorkerMove(worker, destination, direction)
+    return destination !== null
+  }, async () => {
+    const next = chopWood(resources, worker)
+    const changed = next !== resources
+    resources = next
+    return changed
+  }, async direction => {
+    worker = turnWorker(worker, direction)
+    return true
+  })
+  await game.runCommands(commands)
+  assert.deepEqual(worker, { column: 5, row: 2, facing: 'down' })
+  assert.equal(resources.collectedWood, 4)
+  assert.equal(resources.trees.find(tree => tree.column === 5 && tree.row === 1)?.wood, 2)
+  assert.equal(resources.trees.some(tree => tree.column === 6 && tree.row === 2), false)
+  await assert.rejects(runner.run('for i in range(101):\n    turn_up()'), /limit 100/)
 })
 
 test('prawdziwy Python: pętla for, zmienna, funkcja i kolejność komend', async () => {

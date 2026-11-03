@@ -10,6 +10,11 @@ const steps: Record<Direction, TilePosition> = {
   right: { column: 1, row: 0 },
 }
 
+export function getAdjacentTile(position: TilePosition, direction: Direction): TilePosition {
+  const step = steps[direction]
+  return { column: position.column + step.column, row: position.row + step.row }
+}
+
 // Wspólne reguły dla klawiatury i przyszłych poleceń z Pythona.
 // null oznacza zablokowany ruch. Funkcja nie zmienia mapy ani pozycji wejściowej.
 export function getWorkerDestination(
@@ -17,11 +22,7 @@ export function getWorkerDestination(
   position: TilePosition,
   direction: Direction,
 ): TilePosition | null {
-  const step = steps[direction]
-  const destination = {
-    column: position.column + step.column,
-    row: position.row + step.row,
-  }
+  const destination = getAdjacentTile(position, direction)
   const { column, row } = destination
 
   if (column < 0 || column >= map.columns || row < 0 || row >= map.rows) {

@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import type { KeyboardEvent } from 'react'
+import type { KeyboardEvent, RefObject } from 'react'
 import { editIndentation } from './indentation'
 
 const defaultCode = 'move_right()\nmove_right()'
@@ -7,12 +7,12 @@ const defaultCode = 'move_right()\nmove_right()'
 interface CodeEditorProps {
   onRunCode: (code: string) => Promise<boolean>
   disabled: boolean
+  editorRef: RefObject<HTMLTextAreaElement | null>
 }
 
-export default function CodeEditor({ onRunCode, disabled }: CodeEditorProps) {
+export default function CodeEditor({ onRunCode, disabled, editorRef }: CodeEditorProps) {
   const [code, setCode] = useState(defaultCode)
   const [error, setError] = useState<string | null>(null)
-  const editorRef = useRef<HTMLTextAreaElement>(null)
   const pendingSelection = useRef<{
     start: number
     end: number
@@ -81,6 +81,7 @@ export default function CodeEditor({ onRunCode, disabled }: CodeEditorProps) {
       </button>
       <p id="code-editor-note">
         Dostępne: move_up(), move_down(), move_left(), move_right(), chop_wood().
+        Obrót w miejscu: turn_up(), turn_down(), turn_left(), turn_right().
         Możesz używać pętli, zmiennych i funkcji. Limit: 100 komend i 2 sekundy obliczeń.
       </p>
       {error && <p id="code-editor-error" className="code-error" role="alert">{error}</p>}
