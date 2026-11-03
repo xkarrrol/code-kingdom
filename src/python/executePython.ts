@@ -31,6 +31,10 @@ export async function executePython(
       requireJSPI()
       return bridge.getSurroundings()
     },
+    __get_inventory: () => {
+      requireJSPI()
+      return bridge.getInventory()
+    },
   })
 
   try {
@@ -46,6 +50,7 @@ move_down = _make_command(__execute_command, "move_down")
 move_left = _make_command(__execute_command, "move_left")
 move_right = _make_command(__execute_command, "move_right")
 chop_wood = _make_command(__execute_command, "chop_wood")
+deposit_wood = _make_command(__execute_command, "deposit_wood")
 turn_up = _make_command(__execute_command, "turn_up")
 turn_down = _make_command(__execute_command, "turn_down")
 turn_left = _make_command(__execute_command, "turn_left")
@@ -93,6 +98,16 @@ def _make_surroundings_query(query):
 
 get_surroundings = _make_surroundings_query(__get_surroundings)
 del _make_surroundings_query, __get_surroundings
+
+def _make_inventory_query(query):
+    from pyodide.ffi import run_sync
+    def get_inventory():
+        inventory = run_sync(query())
+        return {"wood": int(inventory.wood), "capacity": int(inventory.capacity)}
+    return get_inventory
+
+get_inventory = _make_inventory_query(__get_inventory)
+del _make_inventory_query, __get_inventory
 `, { globals })
 
     const result = await pyodide.runPythonAsync(code, { globals, filename: 'player.py' })

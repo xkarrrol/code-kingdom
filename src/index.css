@@ -163,3 +163,118 @@ main {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+.editor-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.python-reference {
+  min-width: 0;
+  border: 1px solid #39465b;
+  border-radius: 0.75rem;
+  color: #e6edf3;
+  background: #182131;
+  font-size: 0.875rem;
+}
+
+.python-reference summary {
+  padding: 1rem;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.reference-content {
+  display: grid;
+  gap: 0.75rem;
+  padding: 0 1rem 1rem;
+}
+
+.reference-content p,
+.reference-content h3,
+.reference-content h4 {
+  margin: 0;
+}
+
+.reference-content input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 0.65rem;
+  border: 1px solid #53637b;
+  border-radius: 0.375rem;
+  background: #0d1420;
+  color: #e6edf3;
+  font: inherit;
+}
+
+.reference-results {
+  max-height: 60vh;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+
+.reference-results section + section {
+  margin-top: 1.5rem;
+}
+
+.reference-results h3 {
+  color: #8bd69b;
+  font-size: 1rem;
+}
+
+.reference-entry {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem 0;
+  border-bottom: 1px solid #39465b;
+}
+
+.reference-entry button {
+  justify-self: start;
+  max-width: 100%;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #53637b;
+  border-radius: 0.375rem;
+  background: #24364e;
+  color: #c5e2ff;
+  font: inherit;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.reference-entry button:hover {
+  background: #314c6c;
+}
+
+.python-reference :is(summary, input, button):focus-visible {
+  outline: 2px solid #91c9ff;
+  outline-offset: 2px;
+}
+
+.reference-entry pre {
+  margin: 0;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  background: #0d1420;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reference-content > p,
+.reference-entry p {
+  color: #b6c1d0;
+}
+
+@media (min-width: 1440px) {
+  main {
+    max-width: 100rem;
+  }
+
+  .editor-tools {
+    grid-template-columns: minmax(0, 1fr) minmax(18rem, 21rem);
+  }
+}

@@ -7,6 +7,7 @@ import { bindCameraControls } from '../game/cameraControls'
 import { exampleCommands } from '../game/commands'
 import type { WorkerCommands, WorkerCommand } from '../game/commands'
 import type { WorkerStatus } from '../game/workerState'
+import type { WoodStatus } from '../game/resources'
 import type { TilePosition } from '../game/map'
 import type { ControlState } from '../game/controlModes'
 import type { SelectionAction, SelectionView } from '../game/selection'
@@ -19,8 +20,8 @@ interface KingdomGameProps {
   onCommandsReady: (commands: WorkerCommands | null) => void
   onRunCommands: (commands: readonly WorkerCommand[]) => Promise<boolean>
   canRunCommands: boolean
-  wood: number
-  onWoodChanged: (wood: number) => void
+  wood: WoodStatus
+  onWoodChanged: (wood: WoodStatus) => void
   mapRef: RefObject<HTMLDivElement | null>
   controls: ControlState
 }
@@ -85,7 +86,7 @@ export default function KingdomGame({ onCommandsReady, onRunCommands, canRunComm
 
   return (
     <>
-      <p aria-live="polite">Drewno: {wood}</p>
+      <p aria-live="polite">Drewno robotnika: {wood.inventory.wood}/{wood.inventory.capacity} · Drewno królestwa: {wood.kingdomWood}</p>
       <p>Kierunek patrzenia: {facingLabels[workerStatus.facing]}</p>
       <p role="status">{workerStatus.message}</p>
       {controls.mode === 'EXPLORE' && <p>Pole (kolumna, wiersz): {hoveredTile ? `${hoveredTile.column}, ${hoveredTile.row}` : '—'}</p>}

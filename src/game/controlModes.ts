@@ -4,7 +4,7 @@ import type { CameraKeyboardAction } from './cameraKeyboard'
 
 export type ControlMode = 'CODE' | 'EXPLORE'
 export interface ControlState { mode: ControlMode }
-type Area = 'editor' | 'map' | 'other'
+type Area = 'editor' | 'map' | 'reference' | 'other'
 type Shortcut = Pick<KeyboardEvent, 'key' | 'repeat' | 'ctrlKey' | 'altKey' | 'metaKey' | 'isComposing'> & { shiftKey?: boolean }
 
 export function changeMode(state: ControlState, mode: ControlMode): ControlState {
@@ -12,6 +12,7 @@ export function changeMode(state: ControlState, mode: ControlMode): ControlState
 }
 
 export function keyboardAction(mode: ControlMode, event: Shortcut, area: Area, editable: boolean) {
+  if (area === 'reference') return null
   if (event.repeat || event.ctrlKey || event.altKey || event.metaKey || event.isComposing) return null
   if (area === 'editor' && event.key === 'Escape') return 'explore'
   if (mode !== 'EXPLORE' || editable) return null
@@ -38,6 +39,7 @@ export function bindControlModes(
   const clearCamera = () => sendCamera({ type: 'clear' })
   const areaOf = (target: EventTarget | null): Area => {
     if (!(target instanceof Element)) return 'other'
+    if (target.closest('[data-python-reference]')) return 'reference'
     if (editor.contains(target)) return 'editor'
     if (map.contains(target)) return 'map'
     return 'other'
@@ -50,7 +52,7 @@ export function bindControlModes(
   }
   const selectArea = (event: Event) => {
     const area = areaOf(event.target)
-    if (area !== 'other') publish(changeMode(state, area === 'editor' ? 'CODE' : 'EXPLORE'))
+    if (area === 'editor' || area === 'map') publish(changeMode(state, area === 'editor' ? 'CODE' : 'EXPLORE'))
   }
   const keydown = (event: KeyboardEvent) => {
     const editable = event.target instanceof Element && !!event.target.closest('textarea,input,select,[contenteditable]')

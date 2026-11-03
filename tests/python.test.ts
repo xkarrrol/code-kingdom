@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict'
+import assert from 'node:assert/strict'
 import test from 'node:test'
 import { Worker } from 'node:worker_threads'
 import { PythonRunner } from '../src/python/PythonRunner.ts'
@@ -6,7 +6,8 @@ import type { PythonWorker, GameBridge } from '../src/python/PythonRunner.ts'
 import type { PythonRequest } from '../src/python/messages.ts'
 import { WorkerCommands } from '../src/game/commands.ts'
 import type { WorkerCommand } from '../src/game/commands.ts'
-import { chopWood, createResources, getTreeAhead } from '../src/game/resources.ts'
+import { chopWood, createResources, depositWood, getInventory, getTreeAhead } from '../src/game/resources.ts'
+import { createMission, updateMission } from '../src/game/mission.ts'
 import { kingdomMap } from '../src/game/map.ts'
 import { getWorkerDestination } from '../src/game/movement.ts'
 import { getSurroundings } from '../src/game/surroundings.ts'
@@ -28,6 +29,7 @@ function createRealWorker(jspi?: boolean): PythonWorker {
 function gameFixture(animationMs = 0, start = kingdomMap.worker) {
   let resources = createResources(kingdomMap.trees)
   let worker = createWorkerState(start)
+  let mission = createMission()
   const executed: WorkerCommand[] = []
   const game = new WorkerCommands(async direction => {
     const destination = getWorkerDestination({ ...kingdomMap, trees: resources.trees }, worker, direction)
@@ -38,17 +40,26 @@ function gameFixture(animationMs = 0, start = kingdomMap.worker) {
     const next = chopWood(resources, worker)
     const changed = next !== resources
     resources = next
+    mission = updateMission(mission, resources.kingdomWood)
     return changed
   }, async direction => {
     worker = turnWorker(worker, direction)
     return true
   }, () => worker, direction => getWorkerDestination({ ...kingdomMap, trees: resources.trees }, worker, direction) !== null,
   () => getTreeAhead(resources, worker) !== undefined,
-  () => getSurroundings({ ...kingdomMap, trees: resources.trees }, worker))
+  () => getSurroundings({ ...kingdomMap, trees: resources.trees }, worker),
+  async () => {
+    const next = depositWood(resources, worker, kingdomMap.castle)
+    const changed = next !== resources
+    resources = next
+    mission = updateMission(mission, resources.kingdomWood)
+    return changed
+  }, () => getInventory(resources))
   const bridge: GameBridge = {
     canMove: direction => game.canMove(direction),
     treeAhead: () => game.treeAhead(),
     getSurroundings: () => game.getSurroundings(),
+    getInventory: () => game.getInventory(),
     getWorkerPosition: () => {
       const position = game.getWorkerPosition()
       return { x: position.column, y: position.row }
@@ -58,7 +69,7 @@ function gameFixture(animationMs = 0, start = kingdomMap.worker) {
       return game.runCommands([command])
     },
   }
-  return { game, bridge, executed, state: () => ({ worker, resources }) }
+  return { game, bridge, executed, state: () => ({ worker, resources, mission }) }
 }
 
 const flush = () => new Promise<void>(resolve => setImmediate(resolve))
@@ -99,6 +110,64 @@ move_up()
   assert.equal(game.game.getWorkerPosition().column, 6)
 })
 
+test('Python zbiera do pełna, nie uszkadza drzewa przy pełnym ekwipunku i dostarcza zapasy do zamku', async () => {
+  const game = gameFixture(30)
+  const runner = new PythonRunner(createRealWorker)
+  await runner.run(`
+inventory = get_inventory()
+assert type(inventory) is dict
+assert inventory == {"wood": 0, "capacity": 5}
+assert type(inventory["wood"]) is int
+inventory["wood"] = 999
+assert get_inventory()["wood"] == 0
+deposit_wood() # pusty ekwipunek
+move_up()
+move_up()
+for i in range(3):
+    chop_wood()
+turn_right()
+for i in range(2):
+    chop_wood()
+assert get_inventory() == {"wood": 5, "capacity": 5}
+chop_wood() # pełny ekwipunek
+assert tree_ahead() is True
+assert get_inventory()["wood"] == 5
+deposit_wood() # po skosie od zamku: nic nie dostarcza
+assert get_inventory()["wood"] == 5
+`, game.bridge)
+  assert.equal(game.state().resources.kingdomWood, 0)
+  assert.equal(game.state().resources.trees.find(tree => tree.column === 6 && tree.row === 2)?.wood, 1)
+  assert.deepEqual(game.state().mission, { progress: 0, completed: false })
+  await runner.run(`
+move_down()
+turn_right() # patrzy w stronę przeciwną do zamku
+deposit_wood()
+assert get_inventory() == {"wood": 0, "capacity": 5}
+`, game.bridge)
+  assert.equal(game.state().resources.kingdomWood, 5)
+  const completed = game.state().mission
+  assert.deepEqual(completed, { progress: 3, completed: true })
+  await runner.run(`
+move_up()
+turn_right()
+chop_wood()
+assert tree_ahead() is False
+move_down()
+deposit_wood()
+deposit_wood()
+assert get_inventory()["wood"] == 0
+`, game.bridge)
+  assert.equal(game.state().resources.kingdomWood, 6)
+  assert.equal(game.state().mission, completed)
+})
+
+test('get_inventory współdzieli limit 100 odczytów, bez przekazywania stanu zasobów do Pythona', async () => {
+  const game = gameFixture()
+  const runner = new PythonRunner(createRealWorker)
+  await runner.run('for i in range(100):\n    assert get_inventory() == {"wood": 0, "capacity": 5}', game.bridge)
+  await assert.rejects(runner.run('for i in range(100):\n    get_inventory()\nget_worker_position()', game.bridge), /100 zapytań/)
+})
+
 test('get_surroundings zwraca prawdziwy słownik Python z aktualnymi sąsiadami po ruchu i ścinaniu', async () => {
   const game = gameFixture(30)
   await new PythonRunner(createRealWorker).run(`
@@ -119,7 +188,7 @@ for i in range(3):
 assert get_surroundings()["up"] == "empty"
 assert at_tree["up"] == "tree" # wcześniejszy odczyt jest kopią
 `, game.bridge)
-  assert.equal(game.state().resources.collectedWood, 3)
+  assert.equal(game.state().resources.workerWood, 3)
 })
 
 test('100 wywołań get_surroundings to 100 odczytów, a nie 400', async () => {
@@ -151,7 +220,7 @@ for i in range(3):
     chop_wood()
 assert tree_ahead() is False
 `, game.bridge)
-  assert.equal(game.state().resources.collectedWood, 3)
+  assert.equal(game.state().resources.workerWood, 3)
   await assert.rejects(runner.run('for i in range(101):\n    tree_ahead()', game.bridge), /100 zapytań/)
 })
 
@@ -169,7 +238,7 @@ turn_up()
 turn_left()
 turn_down()
 `, game.bridge)
-  assert.equal(game.state().resources.collectedWood, 3)
+  assert.equal(game.state().resources.workerWood, 3)
   assert.equal(game.state().resources.trees.some(tree => tree.column === 6 && tree.row === 2), false)
   assert.deepEqual(game.state().worker, { column: 6, row: 2, facing: 'down' })
   assert.deepEqual(game.executed, ['move_up', 'move_up', 'turn_right', 'chop_wood', 'chop_wood', 'chop_wood', 'move_right', 'turn_up', 'turn_left', 'turn_down'])
@@ -189,7 +258,7 @@ move_left()
 move_left() # zamek
 assert get_worker_position() == {"x": 5, "y": 3}
 `, game.bridge)
-  assert.equal(game.state().resources.collectedWood, 0)
+  assert.equal(game.state().resources.workerWood, 0)
 })
 
 test('błąd Pythona zachowuje ukończone ruchy i zebrane drewno, pomija dalsze działania', async () => {
@@ -203,7 +272,7 @@ missing_function()
 move_down()
 `, game.bridge), /NameError/)
   assert.deepEqual(game.executed, ['move_right', 'move_up', 'chop_wood'])
-  assert.equal(game.state().resources.collectedWood, 1)
+  assert.equal(game.state().resources.workerWood, 1)
   assert.deepEqual(game.bridge.getWorkerPosition(), { x: 6, y: 3 })
   await assert.rejects(runner.run('for', game.bridge), /SyntaxError/)
   assert.equal(game.executed.length, 3)
@@ -261,7 +330,7 @@ while can_move_up():
 assert get_worker_position() == {"x": 6, "y": 0}
 assert can_move_up() is False # granica mapy
 `, game.bridge)
-  assert.equal(game.state().resources.collectedWood, 3)
+  assert.equal(game.state().resources.workerWood, 3)
   assert.equal(game.state().worker.row, 0)
 })
 

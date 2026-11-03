@@ -2,7 +2,8 @@
 import type { BridgeResponse, PythonRequest, WorkerPosition, WorldValue } from './messages'
 import type { Direction } from '../game/movement'
 import type { Surroundings } from '../game/surroundings'
-import { COMPUTE_TIMEOUT_MS, isDirection, isSurroundings, isWorkerCommand, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES, RESPONSE_TIMEOUT_MS } from './messages.ts'
+import type { Inventory } from '../game/resources'
+import { COMPUTE_TIMEOUT_MS, isDirection, isInventory, isSurroundings, isWorkerCommand, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES, RESPONSE_TIMEOUT_MS } from './messages.ts'
 
 let nextRunId = 0
 
@@ -18,6 +19,7 @@ export interface GameBridge {
   canMove: (direction: Direction) => boolean | Promise<boolean>
   treeAhead: () => boolean | Promise<boolean>
   getSurroundings: () => Surroundings | Promise<Surroundings>
+  getInventory: () => Inventory | Promise<Inventory>
   executeCommand: (command: WorkerCommand) => Promise<boolean>
 }
 
@@ -138,6 +140,10 @@ export class PythonRunner {
                 const nearby = await game.getSurroundings()
                 if (!isSurroundings(nearby)) throw new Error('Nieprawidłowy opis otoczenia.')
                 value = { up: nearby.up, down: nearby.down, left: nearby.left, right: nearby.right }
+              } else if (data.operation === 'get_inventory') {
+                const inventory = await game.getInventory()
+                if (!isInventory(inventory)) throw new Error('Nieprawidłowy ekwipunek robotnika.')
+                value = { wood: inventory.wood, capacity: inventory.capacity }
               } else throw new Error('Nieobsługiwane zapytanie.')
             }
             response = { type: 'response', runId, requestId, ok: true, value }

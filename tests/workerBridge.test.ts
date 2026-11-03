@@ -90,6 +90,25 @@ test('tree_ahead przechodzi przez protokół, wymaga boolean i dzieli limit odcz
   await assert.rejects(result, /Nieprawidłowa odpowiedź/)
 })
 
+test('get_inventory weryfikuje ekwipunek i korzysta ze wspólnego limitu odczytów', async () => {
+  const sent: PythonMessage[] = []
+  const bridge = new WorkerBridge('inventory', message => sent.push(message))
+  for (let requestId = 1; requestId <= 100; requestId++) {
+    const result = bridge.getInventory()
+    assert.deepEqual(sent.at(-1), { type: 'query', runId: 'inventory', requestId, operation: 'get_inventory' })
+    bridge.receive({ type: 'response', runId: 'inventory', requestId, ok: true, value: { wood: 5, capacity: 5 } })
+    assert.deepEqual(await result, { wood: 5, capacity: 5 })
+  }
+  await assert.rejects(bridge.getWorkerPosition(), /100 zapytań/)
+  assert.equal(sent.length, 100)
+  for (const value of [{ wood: 6, capacity: 5 }, { wood: -1, capacity: 5 }, { wood: 1.5, capacity: 5 }, { wood: 1, capacity: 10 }]) {
+    const invalid = new WorkerBridge('invalid', () => {})
+    const result = invalid.getInventory()
+    invalid.receive({ type: 'response', runId: 'invalid', requestId: 1, ok: true, value })
+    await assert.rejects(result, /Nieprawidłowa odpowiedź/)
+  }
+})
+
 test('get_surroundings wysyła jedno zapytanie i współdzieli limit z pozostałymi odczytami', async () => {
   const sent: PythonMessage[] = []
   const bridge = new WorkerBridge('nearby', message => sent.push(message))

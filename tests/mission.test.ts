@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createMission, updateMission } from '../src/game/mission.ts'
-import { chopWood, createResources } from '../src/game/resources.ts'
+import { chopWood, createResources, depositWood } from '../src/game/resources.ts'
+import { kingdomMap } from '../src/game/map.ts'
 
 test('nowa misja zaczyna się od 0/3', () => {
   assert.deepEqual(createMission(), { progress: 0, completed: false })
 })
 
-test('postęp rośnie po każdym zebranym drewnie i osiąga ukończenie przy 3', () => {
+test('postęp rośnie po dostawach drewna i osiąga ukończenie przy 3', () => {
   let mission = createMission()
   mission = updateMission(mission, 1)
   assert.deepEqual(mission, { progress: 1, completed: false })
@@ -30,21 +31,29 @@ test('powtórzone aktualizacje nie zwiększają postępu, stan wejściowy pozost
   assert.deepEqual(initial, { progress: 0, completed: false })
 })
 
-test('misja reaguje na skuteczne ścinanie, a próby bez drzewa nie dają postępu', () => {
+test('ścinanie nie zwiększa postępu; częściowe dostawy kończą misję tylko raz', () => {
   let resources = createResources([{ column: 2, row: 1 }])
   let mission = createMission()
   resources = chopWood(resources, { column: 2, row: 2, facing: 'down' })
-  mission = updateMission(mission, resources.collectedWood)
+  mission = updateMission(mission, resources.kingdomWood)
   assert.deepEqual(mission, { progress: 0, completed: false })
   for (let i = 1; i <= 3; i++) {
     resources = chopWood(resources, { column: 2, row: 2, facing: 'up' })
-    mission = updateMission(mission, resources.collectedWood)
-    assert.equal(mission.progress, i)
-    assert.equal(mission.completed, i === 3)
+    mission = updateMission(mission, resources.kingdomWood)
+    assert.equal(mission.progress, i === 3 ? 2 : 0)
+    assert.equal(mission.completed, false)
+    if (i === 2) {
+      resources = depositWood(resources, { column: 5, row: 3 }, kingdomMap.castle)
+      mission = updateMission(mission, resources.kingdomWood)
+      assert.deepEqual(mission, { progress: 2, completed: false })
+    }
   }
+  resources = depositWood(resources, { column: 5, row: 4 }, kingdomMap.castle)
+  mission = updateMission(mission, resources.kingdomWood)
+  assert.deepEqual(mission, { progress: 3, completed: true })
   const completed = mission
   resources = chopWood(resources, { column: 2, row: 2, facing: 'up' })
-  assert.equal(updateMission(mission, resources.collectedWood), completed)
+  assert.equal(updateMission(mission, resources.kingdomWood), completed)
 })
 
 test('utworzenie nowej sesji nie zachowuje ukończenia poprzedniej', () => {

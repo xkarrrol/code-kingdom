@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import KingdomGame from './components/KingdomGame'
 import CodeEditor from './components/CodeEditor'
+import PythonReference from './components/PythonReference'
 import type { WorkerCommands, WorkerCommand } from './game/commands'
 import { PythonRunner } from './python/PythonRunner'
 import MissionPanel from './components/MissionPanel'
 import { createMission, updateMission } from './game/mission'
 import { bindControlModes } from './game/controlModes'
 import type { ControlState } from './game/controlModes'
+import { WOOD_CAPACITY } from './game/resources'
+import type { WoodStatus } from './game/resources'
 
 export default function App() {
   const appRef = useRef<HTMLElement>(null)
@@ -22,13 +25,13 @@ export default function App() {
   useEffect(() => () => python.dispose(), [python])
   const [commands, setCommands] = useState<WorkerCommands | null>(null)
   const [isRunning, setIsRunning] = useState(false)
-  const [wood, setWood] = useState(0)
+  const [wood, setWood] = useState<WoodStatus>({ inventory: { wood: 0, capacity: WOOD_CAPACITY }, kingdomWood: 0 })
   const [mission, setMission] = useState(createMission)
 
   // Stabilna funkcja nie powoduje ponownego tworzenia sceny przy aktualizacji misji.
-  const handleWoodChanged = useCallback((collectedWood: number) => {
-    setWood(collectedWood)
-    setMission(current => updateMission(current, collectedWood))
+  const handleWoodChanged = useCallback((status: WoodStatus) => {
+    setWood(status)
+    setMission(current => updateMission(current, status.kingdomWood))
   }, [])
 
   async function runProgram(input: string | readonly WorkerCommand[]): Promise<boolean> {
@@ -47,6 +50,7 @@ export default function App() {
         canMove: direction => commands.canMove(direction),
         treeAhead: () => commands.treeAhead(),
         getSurroundings: () => commands.getSurroundings(),
+        getInventory: () => commands.getInventory(),
       })
       return true
     } finally {
@@ -75,7 +79,10 @@ export default function App() {
         </section>
         <div className="editor-column">
           <MissionPanel mission={mission} />
-          <CodeEditor editorRef={editorRef} onRunCode={runProgram} disabled={commands === null || isRunning} />
+          <div className="editor-tools">
+            <CodeEditor editorRef={editorRef} onRunCode={runProgram} disabled={commands === null || isRunning} />
+            <PythonReference />
+          </div>
         </div>
       </div>
     </main>

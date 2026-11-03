@@ -80,14 +80,7 @@ export default function CodeEditor({ onRunCode, disabled, editorRef }: CodeEdito
         Run Code
       </button>
       <p id="code-editor-note">
-        Dostępne: move_up(), move_down(), move_left(), move_right(), chop_wood().
-        Obrót w miejscu: turn_up(), turn_down(), turn_left(), turn_right().
-        get_worker_position() zwraca słownik z polami x (kolumna) i y (wiersz), liczonymi od zera.
-        can_move_up(), can_move_down(), can_move_left(), can_move_right() sprawdzają wolne pole i zwracają True lub False.
-        tree_ahead() zwraca True, gdy bezpośrednio przed robotnikiem jest drzewo, w przeciwnym razie False.
-        get_surroundings() zwraca opis pól up, down, left, right: empty, tree, water, mountain, castle lub boundary.
-        Komendy wykonują się od razu; odczyt pozycji czeka na zakończenie ruchu.
-        Możesz używać pętli, zmiennych i funkcji. Limit: 100 komend, 100 odczytów i 2 sekundy obliczeń (bez animacji).
+        Opisy funkcji i przykłady znajdziesz w panelu Python Reference.
       </p>
       {error && <p id="code-editor-error" className="code-error" role="alert">{error}</p>}
     </section>

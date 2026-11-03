@@ -64,9 +64,13 @@ test('H/J/K/L i F są skrótami tylko w EXPLORE i poza edytorem', () => {
 class TestElement extends EventTarget {
   children: TestElement[] = []
   editable = false
+  reference = false
   onFocus = () => {}
   contains(target: TestElement) { return this === target || this.children.includes(target) }
-  closest() { return this.editable ? this : null }
+  closest(selector: string) {
+    if (selector === '[data-python-reference]') return this.reference ? this : null
+    return this.editable ? this : null
+  }
   focus() { this.onFocus() }
 }
 
@@ -114,6 +118,30 @@ test('Esc usuwa fokus edytora, I przywraca fokus bez wpisania litery', t => {
   assert.equal(s.states.at(-1)?.mode, 'CODE')
   assert.equal(s.emit('keydown', s.editor, key('g')).defaultPrevented, false)
   assert.equal(s.emit('keydown', s.editor, key('i')).defaultPrevented, false)
+})
+
+test('panel dokumentacji zachowuje tryb i natywną klawiaturę wyszukiwarki, przycisków oraz summary', t => {
+  const s = setup(t)
+  const referenceButton = new TestElement()
+  referenceButton.reference = true
+  s.root.children.push(referenceButton)
+  s.emit('pointerdown', s.map)
+  const current = s.states.at(-1)
+  for (const editable of [false, true]) {
+    referenceButton.editable = editable
+    s.emit('pointerdown', referenceButton)
+    s.emit('focusin', referenceButton)
+    assert.equal(s.states.at(-1), current)
+    for (const value of ['Tab', 'Enter', 'Escape', ' ', 'i', 'h', 'j', 'k', 'l', 'f', 'ArrowUp']) {
+      assert.equal(s.emit('keydown', referenceButton, key(value)).defaultPrevented, false)
+      assert.equal(keyboardAction('CODE', key(value), 'reference', editable), null)
+      assert.equal(keyboardAction('EXPLORE', key(value), 'reference', editable), null)
+    }
+  }
+  assert.equal(s.states.at(-1), current)
+  assert.equal(s.emit('keydown', s.map, key('Tab')).defaultPrevented, true)
+  assert.equal(s.emit('keydown', s.map, key('i')).defaultPrevented, true)
+  assert.equal(s.active, s.editor)
 })
 
 test('kliknięcia i fokus wybierają tryb; G nie jest przechwytywane w żadnym trybie', t => {

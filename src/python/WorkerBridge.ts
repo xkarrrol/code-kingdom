@@ -2,7 +2,8 @@
 import type { Direction } from '../game/movement'
 import type { PythonMessage, BridgeResponse, WorkerPosition, WorldQuery, WorldValue } from './messages'
 import type { Surroundings } from '../game/surroundings'
-import { isSurroundings, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES } from './messages.ts'
+import type { Inventory } from '../game/resources'
+import { isInventory, isSurroundings, isWorkerPosition, MAX_COMMANDS, MAX_QUERIES } from './messages.ts'
 
 export function supportsJSPI(api: unknown): boolean {
   return !!api && typeof api === 'object'
@@ -17,7 +18,7 @@ export class WorkerBridge {
   private closed = false
   private limitError?: Error
   private pending = new Map<number, {
-    resultType: 'position' | 'surroundings' | 'boolean'
+    resultType: 'position' | 'surroundings' | 'inventory' | 'boolean'
     resolve: (value: WorldValue) => void
     reject: (error: Error) => void
   }>()
@@ -45,6 +46,10 @@ export class WorkerBridge {
     return await this.query({ operation: 'get_surroundings' }) as Surroundings
   }
 
+  async getInventory(): Promise<Inventory> {
+    return await this.query({ operation: 'get_inventory' }) as Inventory
+  }
+
   private query(query: WorldQuery): Promise<WorldValue> {
     if (++this.queries > MAX_QUERIES) this.limitError = new Error('Przekroczono limit 100 zapytań.')
     return this.request('query', undefined, query)
@@ -66,7 +71,8 @@ export class WorkerBridge {
     const requestId = ++this.nextId
     return new Promise((resolve, reject) => {
       const resultType = query?.operation === 'get_worker_position' ? 'position'
-        : query?.operation === 'get_surroundings' ? 'surroundings' : 'boolean'
+        : query?.operation === 'get_surroundings' ? 'surroundings'
+        : query?.operation === 'get_inventory' ? 'inventory' : 'boolean'
       this.pending.set(requestId, { resultType, resolve, reject })
       try {
         this.send(kind === 'query'
@@ -86,7 +92,8 @@ export class WorkerBridge {
     this.pending.delete(message.requestId)
     if (!message.ok) request.reject(new Error(message.error))
     else if (request.resultType === 'position' ? !isWorkerPosition(message.value)
-      : request.resultType === 'surroundings' ? !isSurroundings(message.value) : typeof message.value !== 'boolean') {
+      : request.resultType === 'surroundings' ? !isSurroundings(message.value)
+      : request.resultType === 'inventory' ? !isInventory(message.value) : typeof message.value !== 'boolean') {
       request.reject(new Error('Nieprawidłowa odpowiedź silnika gry.'))
     } else request.resolve(message.value)
   }

@@ -2,6 +2,8 @@ import type { WorkerCommand } from '../game/commands'
 
 import type { Direction } from '../game/movement'
 import type { Surroundings } from '../game/surroundings'
+import type { Inventory } from '../game/resources'
+import { WOOD_CAPACITY } from '../game/resources.ts'
 
 export const MAX_COMMANDS = 100
 export const COMPUTE_TIMEOUT_MS = 2000
@@ -10,8 +12,8 @@ export const MAX_QUERIES = 100
 export const RESPONSE_TIMEOUT_MS = 10_000
 
 export interface WorkerPosition { x: number; y: number }
-export type WorldQuery = { operation: 'get_worker_position' } | { operation: 'can_move'; direction: Direction } | { operation: 'tree_ahead' } | { operation: 'get_surroundings' }
-export type WorldValue = WorkerPosition | boolean | Surroundings
+export type WorldQuery = { operation: 'get_worker_position' } | { operation: 'can_move'; direction: Direction } | { operation: 'tree_ahead' } | { operation: 'get_surroundings' } | { operation: 'get_inventory' }
+export type WorldValue = WorkerPosition | boolean | Surroundings | Inventory
 export type BridgeResponse = { type: 'response'; runId: string; requestId: number } & (
   | { ok: true; value: WorldValue }
   | { ok: false; error: string }
@@ -42,8 +44,15 @@ export function isSurroundings(value: unknown): value is Surroundings {
     Object.hasOwn(value, direction) && types.includes((value as Record<string, string>)[direction]))
 }
 
+export function isInventory(value: unknown): value is Inventory {
+  return !!value && typeof value === 'object' && Object.keys(value).length === 2
+    && 'wood' in value && typeof value.wood === 'number' && Number.isInteger(value.wood)
+    && value.wood >= 0 && value.wood <= WOOD_CAPACITY
+    && 'capacity' in value && value.capacity === WOOD_CAPACITY
+}
+
 export function isWorkerCommand(value: unknown): value is WorkerCommand {
   return value === 'move_up' || value === 'move_down' || value === 'move_left' || value === 'move_right'
     || value === 'turn_up' || value === 'turn_down' || value === 'turn_left' || value === 'turn_right'
-    || value === 'chop_wood'
+    || value === 'chop_wood' || value === 'deposit_wood'
 }

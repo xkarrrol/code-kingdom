@@ -6,7 +6,8 @@ import { getSurroundings } from './surroundings'
 import type { Direction } from './movement'
 import { WorkerCommands } from './commands'
 import type { WorkerCommand } from './commands'
-import { chopWood, createResources, getTreeAhead } from './resources'
+import { chopWood, createResources, depositWood, getInventory, getTreeAhead, getWoodStatus, WOOD_CAPACITY } from './resources'
+import type { WoodStatus } from './resources'
 import { completeWorkerMove, createWorkerState, turnWorker } from './workerState'
 import type { WorkerStatus } from './workerState'
 import { createCameraState, followWorker, gameViewport, getCameraScroll, getHoveredTile, panCamera, updateCamera, zoomCamera } from './camera'
@@ -32,7 +33,7 @@ export class KingdomScene extends Phaser.Scene {
   private finishMove?: (moved: boolean) => void
   commands?: WorkerCommands
   private readonly onCommandsReady?: (commands: WorkerCommands) => void
-  private readonly onWoodChanged?: (wood: number) => void
+  private readonly onWoodChanged?: (wood: WoodStatus) => void
   private readonly onStatusChanged?: (status: WorkerStatus) => void
   private resources = createResources(kingdomMap.trees)
   private treeGraphics = new Map<string, Phaser.GameObjects.Graphics>()
@@ -51,7 +52,7 @@ export class KingdomScene extends Phaser.Scene {
 
   constructor(
     onCommandsReady?: (commands: WorkerCommands) => void,
-    onWoodChanged?: (wood: number) => void,
+    onWoodChanged?: (wood: WoodStatus) => void,
     onStatusChanged?: (status: WorkerStatus) => void,
     onHoverChanged?: (tile: TilePosition | null) => void,
     onSelectionChanged?: (view: SelectionView) => void,
@@ -69,7 +70,7 @@ export class KingdomScene extends Phaser.Scene {
     const { columns, rows, tileSize, castle, worker } = kingdomMap
     this.resources = createResources(kingdomMap.trees)
     this.treeGraphics.clear()
-    this.onWoodChanged?.(this.resources.collectedWood)
+    this.onWoodChanged?.(getWoodStatus(this.resources))
 
     renderTerrain(graphics, kingdomMap.terrain, tileSize)
     this.gridGraphics = this.add.graphics().setDepth(1)
@@ -131,6 +132,8 @@ export class KingdomScene extends Phaser.Scene {
       direction => getWorkerDestination({ ...kingdomMap, trees: this.resources.trees }, this.workerState, direction) !== null,
       () => getTreeAhead(this.resources, this.workerState) !== undefined,
       () => getSurroundings({ ...kingdomMap, trees: this.resources.trees }, this.workerState),
+      () => this.depositWorkerWood(),
+      () => getInventory(this.resources),
     )
     this.onCommandsReady?.(this.commands)
 
@@ -357,7 +360,9 @@ export class KingdomScene extends Phaser.Scene {
     if (!this.workerGraphics) return false
     const next = chopWood(this.resources, this.workerState)
     if (next === this.resources) {
-      this.reportStatus('Przed robotnikiem nie ma drzewa. Podejdź do drzewa z odpowiedniej strony.')
+      this.reportStatus(this.resources.workerWood >= WOOD_CAPACITY
+        ? 'Ekwipunek jest pełny. Dostarcz drewno do zamku.'
+        : 'Przed robotnikiem nie ma drzewa. Podejdź do drzewa z odpowiedniej strony.')
       return false
     }
 
@@ -369,8 +374,23 @@ export class KingdomScene extends Phaser.Scene {
       }
     }
     this.resources = next
-    this.onWoodChanged?.(next.collectedWood)
+    this.onWoodChanged?.(getWoodStatus(next))
     this.reportStatus('Zebrano 1 drewno.')
+    return true
+  }
+
+  private async depositWorkerWood(): Promise<boolean> {
+    if (this.pendingMove) await this.pendingMove
+    if (!this.workerGraphics) return false
+    const next = depositWood(this.resources, this.workerState, kingdomMap.castle)
+    if (next === this.resources) {
+      this.reportStatus(this.resources.workerWood === 0
+        ? 'Ekwipunek jest pusty.' : 'Stań na polu obok zamku, aby dostarczyć drewno.')
+      return false
+    }
+    this.resources = next
+    this.onWoodChanged?.(getWoodStatus(next))
+    this.reportStatus('Drewno dostarczono do zamku.')
     return true
   }
 
